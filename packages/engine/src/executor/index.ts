@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,17 +9,25 @@ import {
   readRun,
   type RunSnapshot,
 } from "../journal/index.ts";
-import { getProvider } from "../providers/index.ts";
+import {
+  getProvider,
+  parseGitIdentityParams,
+} from "../providers/index.ts";
 import type { SshExecutor } from "../providers/interface.ts";
 import {
   computePlanHash,
+  computeProfileHash,
   ExitCode,
   type Action,
   type ActionState,
   type Plan,
   type RunEvent,
 } from "../protocol/index.ts";
-import { writePlanAtomic } from "../planner/index.ts";
+import {
+  loadCatalog,
+  writePlanAtomic,
+  type CatalogEntry,
+} from "../planner/index.ts";
 
 export class PlanApprovalError extends Error {
   readonly exitCode = ExitCode.PlanInvalid;
@@ -141,7 +149,105 @@ export function parsePlan(value: unknown): Plan {
   return value as unknown as Plan;
 }
 
-export function readApprovedPlan(path: string, approval: string): Plan {
+function sameStringArray(
+  actual: readonly string[],
+  expected: readonly string[],
+): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
+  );
+}
+
+export function validatePlanAgainstCatalog(
+  plan: Plan,
+  catalog: readonly CatalogEntry[],
+): void {
+  const catalogById = new Map(catalog.map((entry) => [entry.id, entry]));
+  const actionByPackageId = new Map<string, Action>();
+  for (const action of plan.spec.actions) {
+    if (actionByPackageId.has(action.packageId)) {
+      throw new PlanApprovalError(
+        `Plan 重复引用 Catalog 条目：${action.packageId}`,
+      );
+    }
+    actionByPackageId.set(action.packageId, action);
+  }
+
+  for (const action of plan.spec.actions) {
+    const entry = catalogById.get(action.packageId);
+    if (!entry) {
+      throw new PlanApprovalError(
+        `Plan Action 不属于 ${plan.spec.catalogVersion} Catalog：${action.packageId}`,
+      );
+    }
+    if (
+      action.actionId !== `action-${entry.id}` ||
+      action.provider !== entry.provider ||
+      action.critical !== entry.critical
+    ) {
+      throw new PlanApprovalError(
+        `Plan Action 与 Catalog 定义不一致：${action.packageId}`,
+      );
+    }
+    if (entry.provider === "git-identity") {
+      try {
+        parseGitIdentityParams(action.params);
+      } catch {
+        throw new PlanApprovalError("Plan 中的 Git identity 参数无效。");
+      }
+    } else if (
+      computeProfileHash(action.params) !== computeProfileHash(entry.params)
+    ) {
+      throw new PlanApprovalError(
+        `Plan Action 参数与 Catalog 不一致：${action.packageId}`,
+      );
+    }
+
+    const permittedDependencies = new Set(
+      entry.dependsOn.map((id) => `action-${id}`),
+    );
+    if (
+      action.dependsOn.some(
+        (dependency) => !permittedDependencies.has(dependency),
+      )
+    ) {
+      throw new PlanApprovalError(
+        `Plan Action 依赖与 Catalog 不一致：${action.packageId}`,
+      );
+    }
+    if (action.type !== "conflict") {
+      const expectedDependencies = entry.dependsOn
+        .map((id) => `action-${id}`)
+        .sort();
+      if (!sameStringArray(action.dependsOn, expectedDependencies)) {
+        throw new PlanApprovalError(
+          `Plan Action 缺少 Catalog 依赖：${action.packageId}`,
+        );
+      }
+    }
+  }
+}
+
+function loadApprovedCatalog(
+  catalogDirectory: string,
+  catalogVersion: string,
+): CatalogEntry[] {
+  try {
+    return loadCatalog(catalogDirectory, catalogVersion);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new PlanApprovalError(
+      `无法验证 Plan 绑定的 Catalog：${message}`,
+    );
+  }
+}
+
+export function readApprovedPlan(
+  path: string,
+  approval: string,
+  catalogDirectory?: string,
+): Plan {
   if (!/^[0-9a-f]{64}$/.test(approval)) {
     throw new PlanApprovalError("--approve 必须是 64 位小写 SHA-256。");
   }
@@ -161,6 +267,12 @@ export function readApprovedPlan(path: string, approval: string): Plan {
   if (computed !== plan.planHash || computed !== approval) {
     throw new PlanApprovalError(
       `Plan hash 不匹配；实际为 ${computed}。`,
+    );
+  }
+  if (catalogDirectory !== undefined) {
+    validatePlanAgainstCatalog(
+      plan,
+      loadApprovedCatalog(catalogDirectory, plan.spec.catalogVersion),
     );
   }
   return plan;
@@ -183,27 +295,83 @@ export class NodeProviderSshExecutor implements SshExecutor {
 
   async run(
     command: string,
+    options?: {
+      readonly onOutput?: (stream: "stdout" | "stderr") => void;
+    },
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return new Promise((resolvePromise) => {
-      execFile(
+      const child = spawn(
         this.#ssh,
         ["-F", this.#configPath, this.#alias, command],
         {
-          encoding: "utf8",
-          timeout: 2 * 60 * 60 * 1000,
           windowsHide: true,
-          maxBuffer: 4 * 1024 * 1024,
-        },
-        (error, stdout, stderr) => {
-          const exitCode =
-            error && "code" in error && typeof error.code === "number"
-              ? error.code
-              : error
-                ? 1
-                : 0;
-          resolvePromise({ stdout, stderr, exitCode });
+          stdio: ["ignore", "pipe", "pipe"],
         },
       );
+      const maximumCapturedBytes = 4 * 1024 * 1024;
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let settled = false;
+      let timedOut = false;
+      const capture = (
+        values: Buffer[],
+        chunk: Buffer,
+        capturedBytes: number,
+      ): number => {
+        const remaining = maximumCapturedBytes - capturedBytes;
+        if (remaining <= 0) {
+          return capturedBytes;
+        }
+        const value = chunk.subarray(0, remaining);
+        values.push(value);
+        return capturedBytes + value.length;
+      };
+      const notifyOutput = (stream: "stdout" | "stderr"): void => {
+        try {
+          options?.onOutput?.(stream);
+        } catch {
+          // Progress reporting is best-effort. The command's terminal event
+          // remains authoritative and must not be replaced by callback errors.
+        }
+      };
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdoutBytes = capture(stdout, chunk, stdoutBytes);
+        notifyOutput("stdout");
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderrBytes = capture(stderr, chunk, stderrBytes);
+        notifyOutput("stderr");
+      });
+      const timeout = setTimeout(
+        () => {
+          timedOut = true;
+          child.kill();
+        },
+        2 * 60 * 60 * 1000,
+      );
+      timeout.unref();
+      const finish = (exitCode: number, error?: Error): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        if (error) {
+          stderr.push(Buffer.from(error.message, "utf8"));
+        }
+        if (timedOut) {
+          stderr.push(Buffer.from("SSH command timed out.", "utf8"));
+        }
+        resolvePromise({
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+          exitCode,
+        });
+      };
+      child.on("error", (error) => finish(1, error));
+      child.on("close", (code) => finish(code ?? 1));
     });
   }
 }
@@ -245,6 +413,42 @@ function descendants(
     }
   }
   return result;
+}
+
+function withProgress(
+  ssh: SshExecutor,
+  action: Action,
+  report: (event: RunEvent) => void,
+  now: () => Date,
+  runId: string,
+): SshExecutor {
+  let lastProgressAt = 0;
+  return {
+    run(command) {
+      return ssh.run(command, {
+        onOutput() {
+          const current = Date.now();
+          if (lastProgressAt !== 0 && current - lastProgressAt < 5_000) {
+            return;
+          }
+          lastProgressAt = current;
+          try {
+            report({
+              timestamp: now().toISOString(),
+              runId,
+              event: {
+                type: "action-progress",
+                actionId: action.actionId,
+                message: `${action.packageId} 正在执行；已收到远端输出。`,
+              },
+            });
+          } catch {
+            // Progress reporting is informational and cannot change Run state.
+          }
+        },
+      });
+    },
+  };
 }
 
 export async function executePlan(
@@ -347,23 +551,43 @@ export async function executePlan(
 
       let operationError: unknown;
       let wasAlreadyInstalled = false;
+      let progressWrites = Promise.resolve();
+      const actionSsh = withProgress(
+        options.ssh,
+        action,
+        (event) => {
+          progressWrites = progressWrites.then(async () => {
+            await journal.commit(event, snapshot());
+            events.push(event);
+            try {
+              options.emit?.(event);
+            } catch {
+              // Progress output is informational; terminal events still report
+              // the authoritative result and preserve existing output semantics.
+            }
+          });
+        },
+        now,
+        runId,
+      );
       try {
         if (action.type === "conflict") {
           throw new Error(`${action.packageId} 存在无法自动处理的冲突。`);
         }
         const provider = getProvider(action.provider);
-        const check = await provider.check(action.params, options.ssh);
+        const check = await provider.check(action.params, actionSsh);
         wasAlreadyInstalled = check.installed;
         if (!check.installed) {
           if (action.type === "skip") {
             throw new Error(`${action.packageId} 不再满足 skip 条件。`);
           }
-          await provider.apply(action.params, options.ssh);
-          await provider.verify(action.params, options.ssh);
+          await provider.apply(action.params, actionSsh);
+          await provider.verify(action.params, actionSsh);
         }
       } catch (error) {
         operationError = error;
       }
+      await progressWrites;
 
       if (operationError === undefined) {
         const finishedAt = now().toISOString();
@@ -465,6 +689,7 @@ interface ResumeRunOptions {
   readonly runId: string;
   readonly ssh: SshExecutor;
   readonly runsDirectory?: string;
+  readonly catalogDirectory?: string;
   readonly now?: () => Date;
   readonly emit?: (event: RunEvent) => void;
 }
@@ -480,6 +705,7 @@ export interface VerifyRunResult {
 function readStoredPlan(
   runId: string,
   runsDirectory: string,
+  catalogDirectory?: string,
 ): { plan: Plan; snapshot: RunSnapshot } {
   const { snapshot } = readRun(runId, { runsDirectory });
   const planPath = join(runsDirectory, runId, "plan.json");
@@ -500,14 +726,21 @@ function readStoredPlan(
   ) {
     throw new PlanApprovalError("Run 的 Plan 与 snapshot hash 不匹配。");
   }
+  if (catalogDirectory !== undefined) {
+    validatePlanAgainstCatalog(
+      plan,
+      loadApprovedCatalog(catalogDirectory, plan.spec.catalogVersion),
+    );
+  }
   return { plan, snapshot };
 }
 
 export function readRunPlan(
   runId: string,
   runsDirectory = join(homedir(), ".dawn-forge", "runs"),
+  catalogDirectory?: string,
 ): Plan {
-  return readStoredPlan(runId, runsDirectory).plan;
+  return readStoredPlan(runId, runsDirectory, catalogDirectory).plan;
 }
 
 export async function resumeRun(
@@ -515,7 +748,7 @@ export async function resumeRun(
 ): Promise<ExecutePlanResult> {
   const runsDirectory =
     options.runsDirectory ?? join(homedir(), ".dawn-forge", "runs");
-  readStoredPlan(options.runId, runsDirectory);
+  readStoredPlan(options.runId, runsDirectory, options.catalogDirectory);
   const journal = openJournal(options.runId, { runsDirectory });
   const now = options.now ?? (() => new Date());
   const events: RunEvent[] = [];
@@ -524,6 +757,7 @@ export async function resumeRun(
     const { plan, snapshot: storedSnapshot } = readStoredPlan(
       options.runId,
       runsDirectory,
+      options.catalogDirectory,
     );
     const states = new Map<string, ActionState>(
       storedSnapshot.actions.map((action) => [action.actionId, action.state]),
@@ -779,23 +1013,42 @@ export async function resumeRun(
 
       let operationError: unknown;
       let wasAlreadyInstalled = false;
+      let progressWrites = Promise.resolve();
+      const actionSsh = withProgress(
+        options.ssh,
+        action,
+        (event) => {
+          progressWrites = progressWrites.then(async () => {
+            await journal.commit(event, snapshot());
+            events.push(event);
+            try {
+              options.emit?.(event);
+            } catch {
+              // See executePlan: progress output cannot replace Run state.
+            }
+          });
+        },
+        now,
+        options.runId,
+      );
       try {
         if (action.type === "conflict") {
           throw new Error(`${action.packageId} 存在无法自动处理的冲突。`);
         }
         const provider = getProvider(action.provider);
-        const check = await provider.check(action.params, options.ssh);
+        const check = await provider.check(action.params, actionSsh);
         wasAlreadyInstalled = check.installed;
         if (!check.installed) {
           if (action.type === "skip") {
             throw new Error(`${action.packageId} 不再满足 skip 条件。`);
           }
-          await provider.apply(action.params, options.ssh);
-          await provider.verify(action.params, options.ssh);
+          await provider.apply(action.params, actionSsh);
+          await provider.verify(action.params, actionSsh);
         }
       } catch (error) {
         operationError = error;
       }
+      await progressWrites;
       if (operationError !== undefined) {
         if (await failAction(action, operationError)) {
           return {
@@ -853,6 +1106,7 @@ interface VerifyRunOptions {
   readonly runId: string;
   readonly ssh: SshExecutor;
   readonly runsDirectory?: string;
+  readonly catalogDirectory?: string;
 }
 
 export async function verifyRun(
@@ -860,7 +1114,11 @@ export async function verifyRun(
 ): Promise<VerifyRunResult> {
   const runsDirectory =
     options.runsDirectory ?? join(homedir(), ".dawn-forge", "runs");
-  const { plan, snapshot } = readStoredPlan(options.runId, runsDirectory);
+  const { plan, snapshot } = readStoredPlan(
+    options.runId,
+    runsDirectory,
+    options.catalogDirectory,
+  );
   const states = new Map(
     snapshot.actions.map((action) => [action.actionId, action.state]),
   );

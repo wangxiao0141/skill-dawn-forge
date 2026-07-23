@@ -75,6 +75,11 @@ export interface RunEvent {
         readonly message: string;
       }
     | {
+        readonly type: "action-progress";
+        readonly actionId: string;
+        readonly message: string;
+      }
+    | {
         readonly type: "action-skipped";
         readonly actionId: string;
         readonly message: string;

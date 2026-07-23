@@ -6,6 +6,7 @@ import type { Target } from "../protocol/index.ts";
 import {
   PlannerInputError,
   createPlan,
+  parseProfile,
   type CatalogEntry,
   type Profile,
 } from "./index.ts";
@@ -55,6 +56,13 @@ const catalog: CatalogEntry[] = [
     params: {},
     critical: false,
     dependsOn: ["homebrew"],
+  },
+  {
+    id: "git-identity",
+    provider: "git-identity",
+    params: {},
+    critical: false,
+    dependsOn: ["git"],
   },
   {
     id: "node",
@@ -134,6 +142,127 @@ test("Planner 将缺失的 Homebrew 本体分类为 manual", () => {
   });
 
   assert.equal(plan.spec.actions[0].type, "manual");
+});
+
+test("Planner 将 Git identity 参数写入 Plan 并展开 Git 依赖", () => {
+  const identity = {
+    name: "Wang Xiao",
+    email: "wang@example.com",
+  };
+  const plan = createPlan({
+    target,
+    snapshot,
+    profile: {
+      ...profile,
+      packages: [
+        { id: "git-identity", state: "present", params: identity },
+      ],
+    },
+    catalog,
+    now: new Date("2026-07-23T12:00:00.000Z"),
+  });
+  const actions = new Map(
+    plan.spec.actions.map((action) => [action.packageId, action]),
+  );
+
+  assert.deepEqual(actions.get("git-identity")?.params, identity);
+  assert.deepEqual(actions.get("git-identity")?.dependsOn, ["action-git"]);
+  assert.equal(actions.get("git-identity")?.type, "install");
+  assert.ok(actions.has("homebrew"));
+  assert.ok(actions.has("git"));
+});
+
+test("Planner 将已匹配的 Git identity 分类为 skip", () => {
+  const identity = {
+    name: "Wang Xiao",
+    email: "wang@example.com",
+  };
+  const plan = createPlan({
+    target,
+    snapshot: {
+      ...snapshot,
+      git: {
+        ...snapshot.git,
+        userName: identity.name,
+        userEmail: identity.email,
+      },
+    },
+    profile: {
+      ...profile,
+      packages: [
+        { id: "git-identity", state: "present", params: identity },
+      ],
+    },
+    catalog,
+    now: new Date("2026-07-23T12:00:00.000Z"),
+  });
+
+  assert.equal(
+    plan.spec.actions.find(
+      (action) => action.packageId === "git-identity",
+    )?.type,
+    "skip",
+  );
+});
+
+test("Profile 只允许 git-identity 携带合法 name 和 email", () => {
+  assert.deepEqual(
+    parseProfile({
+      schemaVersion: 1,
+      platform: "macos",
+      catalogVersion: "v1",
+      packages: [
+        {
+          id: "git-identity",
+          state: "present",
+          params: { name: "Wang Xiao", email: "wang@example.com" },
+        },
+      ],
+    }).packages[0].params,
+    { name: "Wang Xiao", email: "wang@example.com" },
+  );
+  assert.throws(
+    () =>
+      parseProfile({
+        schemaVersion: 1,
+        platform: "macos",
+        catalogVersion: "v1",
+        packages: [
+          {
+            id: "git-identity",
+            state: "present",
+            params: { name: "Wang\nXiao", email: "invalid" },
+          },
+        ],
+      }),
+    PlannerInputError,
+  );
+  assert.throws(
+    () =>
+      parseProfile({
+        schemaVersion: 1,
+        platform: "macos",
+        catalogVersion: "v1",
+        packages: [
+          {
+            id: "node",
+            state: "present",
+            params: { name: "unexpected", email: "x@example.com" },
+          },
+        ],
+      }),
+    PlannerInputError,
+  );
+  assert.throws(
+    () =>
+      parseProfile({
+        schemaVersion: 1,
+        platform: "macos",
+        catalogVersion: "v1",
+        packages: [null],
+      }),
+    PlannerInputError,
+  );
 });
 
 test("absent Action 不展开或保留安装依赖", () => {

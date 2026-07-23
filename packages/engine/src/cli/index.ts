@@ -186,6 +186,7 @@ function emitRunEvent(
       stdout(`Run ${event.runId}`);
       break;
     case "action-started":
+    case "action-progress":
     case "action-succeeded":
     case "action-skipped":
     case "action-failed":
@@ -240,9 +241,6 @@ function defaultTargetManager(
 export function resolveCatalogDirectory(
   entryPath = process.argv[1],
 ): string {
-  if (process.env.DAWN_CATALOG_DIRECTORY) {
-    return resolve(process.env.DAWN_CATALOG_DIRECTORY);
-  }
   const entryDirectory = dirname(
     resolve(entryPath ?? fileURLToPath(import.meta.url)),
   );
@@ -379,6 +377,7 @@ export async function runCli(
       const plan = readApprovedPlan(
         requiredOption(options, "--plan"),
         requiredOption(options, "--approve"),
+        dependencies.catalogDirectory ?? resolveCatalogDirectory(),
       );
       const requestedFormat = options.get("--format");
       if (requestedFormat !== undefined && requestedFormat !== "jsonl") {
@@ -438,7 +437,13 @@ export async function runCli(
         : await (async () => {
             const homeDirectory = dependencies.homeDirectory ?? homedir();
             const runsDirectory = cliRunsDirectory(dependencies);
-            const plan = readRunPlan(runId, runsDirectory);
+            const catalogDirectory =
+              dependencies.catalogDirectory ?? resolveCatalogDirectory();
+            const plan = readRunPlan(
+              runId,
+              runsDirectory,
+              catalogDirectory,
+            );
             const manager =
               dependencies.targetManager ?? defaultTargetManager(stdout);
             const resumeTarget = async (target: Target) => {
@@ -460,6 +465,7 @@ export async function runCli(
                     target.locators.sshAlias,
                   ),
                 runsDirectory,
+                catalogDirectory,
                 emit,
               });
             };
@@ -477,7 +483,13 @@ export async function runCli(
       : await (async () => {
           const homeDirectory = dependencies.homeDirectory ?? homedir();
           const runsDirectory = cliRunsDirectory(dependencies);
-          const plan = readRunPlan(runId, runsDirectory);
+          const catalogDirectory =
+            dependencies.catalogDirectory ?? resolveCatalogDirectory();
+          const plan = readRunPlan(
+            runId,
+            runsDirectory,
+            catalogDirectory,
+          );
           const manager =
             dependencies.targetManager ?? defaultTargetManager(stdout);
           const verifyTarget = async (target: Target) => {
@@ -499,6 +511,7 @@ export async function runCli(
                   target.locators.sshAlias,
                 ),
               runsDirectory,
+              catalogDirectory,
             });
           };
           return manager.withVerifiedTarget

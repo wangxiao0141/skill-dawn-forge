@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 
 import { gitProvider } from "./git.ts";
+import { gitIdentityProvider } from "./git-identity.ts";
 import { homebrewProvider } from "./homebrew.ts";
 import { getProvider } from "./index.ts";
 import { type SshExecutor } from "./interface.ts";
@@ -63,7 +64,7 @@ test("catalog/v1.json 符合 schema 形状且依赖全部可解析", () => {
       [...required].sort(),
     );
     assert.match(entry.id, /^[a-z0-9][a-z0-9._-]{0,63}$/);
-    assert.ok(["homebrew", "git"].includes(entry.provider));
+    assert.ok(["homebrew", "git", "git-identity"].includes(entry.provider));
     assert.equal(typeof entry.params, "object");
     assert.equal(typeof entry.critical, "boolean");
     assert.ok(Array.isArray(entry.dependsOn));
@@ -78,7 +79,7 @@ test("catalog/v1.json 符合 schema 形状且依赖全部可解析", () => {
   }
   assert.deepEqual(
     [...ids].sort(),
-    ["gh", "git", "homebrew", "node", "vscode"],
+    ["gh", "git", "git-identity", "homebrew", "node", "vscode"],
   );
   const gitEntry = catalog.find(
     (entry: { id: string }) => entry.id === "git",
@@ -238,9 +239,100 @@ test("Git apply 委托 Homebrew，verify 复验 git --version", async () => {
   assert.deepEqual(commands, ["brew install git", "git --version"]);
 });
 
+test("Git identity check 精确比较 name 和 email", async () => {
+  const ssh = mockSsh({
+    "git config --global --get user.name": {
+      stdout: "Wang Xiao\n",
+      exitCode: 0,
+    },
+    "git config --global --get user.email": {
+      stdout: "wang@example.com\n",
+      exitCode: 0,
+    },
+  });
+
+  assert.deepEqual(
+    await gitIdentityProvider.check(
+      { name: "Wang Xiao", email: "wang@example.com" },
+      ssh,
+    ),
+    { installed: true },
+  );
+  assert.deepEqual(
+    await gitIdentityProvider.check(
+      { name: "Other", email: "wang@example.com" },
+      ssh,
+    ),
+    { installed: false },
+  );
+  const markerNameSsh = mockSsh({
+    "git config --global --get user.name": {
+      stdout: "__DAWN_GIT_EMAIL__\n",
+      exitCode: 0,
+    },
+    "git config --global --get user.email": {
+      stdout: "wang@example.com\n",
+      exitCode: 0,
+    },
+  });
+  assert.deepEqual(
+    await gitIdentityProvider.check(
+      { name: "__DAWN_GIT_EMAIL__", email: "wang@example.com" },
+      markerNameSsh,
+    ),
+    { installed: true },
+  );
+});
+
+test("Git identity apply 不把 profile 值拼入 shell 命令", async () => {
+  const commands: string[] = [];
+  const ssh: SshExecutor = {
+    async run(command) {
+      commands.push(command);
+      return { stdout: "", stderr: "", exitCode: 0 };
+    },
+  };
+  const name = "Wang $(touch /tmp/pwned)";
+
+  await gitIdentityProvider.apply(
+    { name, email: "wang@example.com" },
+    ssh,
+  );
+
+  assert.equal(commands.length, 1);
+  assert.doesNotMatch(commands[0], /touch|wang@example\.com/);
+  assert.match(commands[0], /base64 -D/);
+});
+
+test("Git identity 在 SSH 前拒绝无效或额外参数", async () => {
+  const commands: string[] = [];
+  const ssh = mockSsh({}, commands);
+
+  await assert.rejects(
+    gitIdentityProvider.apply(
+      { name: "Wang\nXiao", email: "wang@example.com" },
+      ssh,
+    ),
+    /requires safe/,
+  );
+  await assert.rejects(
+    gitIdentityProvider.apply(
+      {
+        name: "Wang Xiao",
+        email: "not-an-email",
+        signingKey: "secret",
+      },
+      ssh,
+    ),
+    /requires safe/,
+  );
+  assert.deepEqual(commands, []);
+});
+
 test("getProvider returns the Homebrew provider", () => {
   assert.equal(getProvider("homebrew"), homebrewProvider);
   assert.equal(getProvider("git"), gitProvider);
+  assert.equal(getProvider("git-identity"), gitIdentityProvider);
 });
 
 test("getProvider rejects an unknown provider", () => {

@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -8,6 +12,16 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const skillDirectory = join(repositoryRoot, "skills", "dawn-forge");
 const skillText = readFileSync(join(skillDirectory, "SKILL.md"), "utf8");
+
+function publishedWorkflowFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return entry.name === "bin" ? [] : publishedWorkflowFiles(path);
+    }
+    return /\.(?:md|mjs)$/.test(entry.name) ? [path] : [];
+  });
+}
 
 test("薄 Skill 只编排完整 Dawn CLI 工作流", () => {
   for (const command of [
@@ -36,12 +50,26 @@ test("Engine 已替换的四个脚本及测试不存在", () => {
     "skills/dawn-forge/scripts/plan-installation.mjs",
     "skills/dawn-forge/scripts/installation-run.mjs",
     "skills/dawn-forge/scripts/run-installation-batch.mjs",
+    "skills/dawn-forge/scripts/installation-batches.mjs",
     "tests/installation-run-state.test.mjs",
     "tests/plan-installation.test.mjs",
     "tests/installation-run.test.mjs",
     "tests/run-installation-batch.test.mjs",
+    "tests/installation-batches.test.mjs",
   ]) {
     assert.equal(existsSync(join(repositoryRoot, file)), false, file);
+  }
+});
+
+test("Skill 发布资源不引用 Engine 已替换的旧入口", () => {
+  const removedEntryPattern =
+    /installation-run-state|plan-installation|installation-run|run-installation-batch/;
+  for (const file of publishedWorkflowFiles(skillDirectory)) {
+    assert.doesNotMatch(
+      readFileSync(file, "utf8"),
+      removedEntryPattern,
+      file,
+    );
   }
 });
 

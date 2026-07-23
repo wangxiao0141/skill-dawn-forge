@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { readRun } from "../journal/index.ts";
 import {
@@ -10,7 +11,10 @@ import {
   type Action,
   type Plan,
 } from "../protocol/index.ts";
-import type { SshExecutor } from "../providers/interface.ts";
+import type {
+  SshExecutor,
+  SshRunOptions,
+} from "../providers/interface.ts";
 import {
   executePlan,
   PlanApprovalError,
@@ -96,6 +100,12 @@ async function withRunsDirectory(
   }
 }
 
+const catalogDirectory = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../..",
+  "catalog",
+);
+
 test("readApprovedPlan 在执行前拒绝不匹配的 approval hash", async () => {
   await withRunsDirectory(async (runsDirectory) => {
     const planPath = join(runsDirectory, "..", "plan.json");
@@ -116,6 +126,69 @@ test("readApprovedPlan 在执行前拒绝不匹配的 approval hash", async () =
     assert.throws(
       () => readApprovedPlan(planPath, value.planHash),
       PlanApprovalError,
+    );
+  });
+});
+
+test("readApprovedPlan 拒绝不属于版本化 Catalog 的自签名 Action", async () => {
+  await withRunsDirectory(async (runsDirectory) => {
+    const planPath = join(runsDirectory, "..", "plan.json");
+    const malicious = plan([action("not-in-catalog")]);
+    await writeFile(planPath, `${JSON.stringify(malicious)}\n`, "utf8");
+
+    assert.throws(
+      () =>
+        readApprovedPlan(
+          planPath,
+          malicious.planHash,
+          catalogDirectory,
+        ),
+      (error: unknown) =>
+        error instanceof PlanApprovalError &&
+        error.exitCode === 20 &&
+        /不属于.*Catalog/.test(error.message),
+    );
+  });
+});
+
+test("readApprovedPlan 拒绝省略 Catalog 必需依赖的自签名 Action", async () => {
+  await withRunsDirectory(async (runsDirectory) => {
+    const planPath = join(runsDirectory, "..", "plan.json");
+    const incomplete = plan([action("node")]);
+    await writeFile(planPath, `${JSON.stringify(incomplete)}\n`, "utf8");
+
+    assert.throws(
+      () =>
+        readApprovedPlan(
+          planPath,
+          incomplete.planHash,
+          catalogDirectory,
+        ),
+      (error: unknown) =>
+        error instanceof PlanApprovalError &&
+        error.exitCode === 20 &&
+        /缺少 Catalog 依赖/.test(error.message),
+    );
+  });
+});
+
+test("readApprovedPlan 将缺失或损坏 Catalog 报告为 plan_invalid", async () => {
+  await withRunsDirectory(async (runsDirectory) => {
+    const planPath = join(runsDirectory, "..", "plan.json");
+    const value = plan([]);
+    await writeFile(planPath, `${JSON.stringify(value)}\n`, "utf8");
+
+    assert.throws(
+      () =>
+        readApprovedPlan(
+          planPath,
+          value.planHash,
+          join(runsDirectory, "..", "missing-catalog"),
+        ),
+      (error: unknown) =>
+        error instanceof PlanApprovalError &&
+        error.exitCode === 20 &&
+        /无法验证 Plan 绑定的 Catalog/.test(error.message),
     );
   });
 });
@@ -170,6 +243,52 @@ test("Executor 成功时按顺序提交 JSONL 事件并持久化 Plan", async ()
     assert.deepEqual(
       run.snapshot.actions.map(({ state }) => state),
       ["succeeded", "succeeded"],
+    );
+  });
+});
+
+test("Executor 收到远端输出时发出不含原始内容的实时进度事件", async () => {
+  await withRunsDirectory(async (runsDirectory) => {
+    const ssh: SshExecutor = {
+      async run(
+        _command: string,
+        options?: SshRunOptions,
+      ): Promise<SshResponse> {
+        options?.onOutput?.("stdout");
+        options?.onOutput?.("stderr");
+        return response(0, "node 24.0.0 super-secret\n");
+      },
+    };
+    const emitted: string[] = [];
+
+    const result = await executePlan({
+      plan: plan([action("node")]),
+      ssh,
+      runsDirectory,
+      runId: "run-progress",
+      now: clock(),
+      emit: (event) => {
+        emitted.push(JSON.stringify(event));
+        if (event.event.type === "action-progress") {
+          throw new Error("progress output closed");
+        }
+      },
+    });
+
+    assert.equal(result.exitCode, 0);
+    const progress = result.events.filter(
+      ({ event }) => event.type === "action-progress",
+    );
+    assert.equal(progress.length, 1);
+    assert.match(JSON.stringify(progress[0]), /正在执行/);
+    assert.doesNotMatch(JSON.stringify(progress[0]), /super-secret/);
+    assert.ok(
+      emitted.some((line) => JSON.parse(line).event.type === "action-progress"),
+    );
+    assert.ok(
+      readRun("run-progress", { runsDirectory }).events.some(
+        ({ event }) => event.type === "action-progress",
+      ),
     );
   });
 });

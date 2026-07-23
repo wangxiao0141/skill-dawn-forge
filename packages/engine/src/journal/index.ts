@@ -520,9 +520,12 @@ function parseEvent(value: unknown, lineNumber: number): RunEvent {
     typeof event.actionId === "string" && typeof event.message === "string";
   const valid =
     eventType === "run-started" ||
-    (["action-started", "action-succeeded", "action-skipped"].includes(
-      eventType,
-    ) &&
+    ([
+      "action-started",
+      "action-progress",
+      "action-succeeded",
+      "action-skipped",
+    ].includes(eventType) &&
       hasActionMessage) ||
     (eventType === "action-failed" &&
       hasActionMessage &&
@@ -640,6 +643,9 @@ function verifySnapshot(
           "needs_user",
           "succeeded",
         ]);
+        break;
+      case "action-progress":
+        transition(item.event.actionId, "running", ["running"]);
         break;
       case "action-skipped":
         transition(item.event.actionId, "skipped", ["running"]);

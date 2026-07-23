@@ -20,6 +20,7 @@ import {
   type InspectorSnapshot,
   type InspectorSshExecutor,
 } from "../inspector/index.ts";
+import { parseGitIdentityParams } from "../providers/index.ts";
 import {
   computePlanHash,
   computeProfileHash,
@@ -41,6 +42,7 @@ export interface CatalogEntry {
 export interface ProfilePackage {
   readonly id: string;
   readonly state: "present" | "absent";
+  readonly params?: Readonly<Record<string, JsonValue>>;
 }
 
 export interface Profile {
@@ -74,7 +76,15 @@ function actionId(packageId: string): string {
 function installed(
   entry: CatalogEntry,
   snapshot: InspectorSnapshot,
+  params: Readonly<Record<string, JsonValue>> = entry.params,
 ): boolean | undefined {
+  if (entry.provider === "git-identity") {
+    return (
+      snapshot.git.installed &&
+      snapshot.git.userName === params.name &&
+      snapshot.git.userEmail === params.email
+    );
+  }
   if (entry.provider === "git") {
     return snapshot.git.installed;
   }
@@ -96,8 +106,9 @@ function classify(
   entry: CatalogEntry,
   desiredState: "present" | "absent",
   snapshot: InspectorSnapshot,
+  params: Readonly<Record<string, JsonValue>> = entry.params,
 ): Action["type"] {
-  const current = installed(entry, snapshot);
+  const current = installed(entry, snapshot, params);
   if (current === undefined) {
     return "conflict";
   }
@@ -275,11 +286,20 @@ export function createPlan(input: CreatePlanInput): Plan {
   }
   validateCatalogGraph(catalogById);
   const requested = resolveRequestedEntries(input.profile, catalogById);
+  const profileParams = new Map(
+    input.profile.packages
+      .filter((item) => item.params !== undefined)
+      .map((item) => [item.id, item.params!]),
+  );
   const orderedIds = topologicalOrder(requested, catalogById);
   const actions: Action[] = orderedIds.flatMap((id) => {
     const entry = catalogById.get(id)!;
     const desiredState = requested.get(id)!;
-    const type = classify(entry, desiredState, input.snapshot);
+    const params =
+      entry.provider === "git-identity"
+        ? (profileParams.get(id) ?? entry.params)
+        : entry.params;
+    const type = classify(entry, desiredState, input.snapshot, params);
     if (desiredState === "absent" && type === "skip") {
       return [];
     }
@@ -288,7 +308,7 @@ export function createPlan(input: CreatePlanInput): Plan {
       type,
       packageId: id,
       provider: entry.provider,
-      params: entry.params,
+      params,
       critical: entry.critical,
       dependsOn:
         desiredState === "present"
@@ -346,6 +366,28 @@ export function parseProfile(value: unknown): Profile {
     throw new PlannerInputError("Profile 结构无效。");
   }
   for (const item of profile.packages) {
+    const isItemRecord =
+      item !== null && typeof item === "object" && !Array.isArray(item);
+    const keys = isItemRecord ? Object.keys(item) : [];
+    const params = isItemRecord
+      ? (item as { params?: unknown }).params
+      : undefined;
+    let validGitIdentity = false;
+    if (
+      isItemRecord &&
+      (item as { id?: unknown; state?: unknown }).id === "git-identity" &&
+      (item as { state?: unknown }).state === "present" &&
+      params !== null &&
+      typeof params === "object" &&
+      !Array.isArray(params)
+    ) {
+      try {
+        parseGitIdentityParams(params as Record<string, unknown>);
+        validGitIdentity = true;
+      } catch {
+        validGitIdentity = false;
+      }
+    }
     if (
       item === null ||
       typeof item !== "object" ||
@@ -353,7 +395,12 @@ export function parseProfile(value: unknown): Profile {
       typeof item.id !== "string" ||
       !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(item.id) ||
       (item.state !== "present" && item.state !== "absent") ||
-      Object.keys(item).some((key) => key !== "id" && key !== "state")
+      keys.some(
+        (key) => key !== "id" && key !== "state" && key !== "params",
+      ) ||
+      (item.id === "git-identity"
+        ? !validGitIdentity
+        : params !== undefined)
     ) {
       throw new PlannerInputError("Profile packages 结构无效。");
     }

@@ -1,7 +1,12 @@
+export interface SshRunOptions {
+  readonly onOutput?: (stream: "stdout" | "stderr") => void;
+}
+
 // 注入的 SSH executor，允许测试替换远程调用。
 export interface SshExecutor {
   run(
     command: string,
+    options?: SshRunOptions,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
 }
 

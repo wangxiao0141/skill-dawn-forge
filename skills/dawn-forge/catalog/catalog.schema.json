@@ -28,7 +28,8 @@
           "type": "string",
           "enum": [
             "homebrew",
-            "git"
+            "git",
+            "git-identity"
           ],
           "description": "处理该软件单元的 Provider 名称。"
         },
@@ -75,7 +76,10 @@
           "if": {
             "properties": {
               "provider": {
-                "const": "git"
+                "enum": [
+                  "git",
+                  "git-identity"
+                ]
               }
             },
             "required": [

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { openJournal, type RunSnapshot } from "../journal/index.ts";
 import {
@@ -21,6 +22,12 @@ interface CommandResult {
   readonly stdout: string;
   readonly stderr: string;
 }
+
+const catalogDirectory = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../..",
+  "catalog",
+);
 
 function runDawn(args: readonly string[], homeDirectory?: string): CommandResult {
   const result = spawnSync(process.execPath, ["bin/dawn.mjs", ...args], {
@@ -162,6 +169,7 @@ test("dawn apply --format jsonl 每个事件输出一行并包含 runId", async 
         "jsonl",
       ],
       {
+        catalogDirectory,
         async applyExecutor({ emit }) {
           events.forEach(emit);
           return { runId: "run-jsonl", exitCode: 0, events };

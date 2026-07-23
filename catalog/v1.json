@@ -16,6 +16,15 @@
     ]
   },
   {
+    "id": "git-identity",
+    "provider": "git-identity",
+    "params": {},
+    "critical": false,
+    "dependsOn": [
+      "git"
+    ]
+  },
+  {
     "id": "node",
     "provider": "homebrew",
     "params": {

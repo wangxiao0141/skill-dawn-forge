@@ -30,7 +30,7 @@ node <skill-directory>/bin/dawn.mjs
    ```
 
    CLI 会显示一条需要在控制机终端执行的受限授权命令。让用户完成该唯一人工步骤，再按 CLI 提示确认。保存 CLI 输出的 `targetId`。
-3. 让用户选择或创建符合 V1 格式的 JSON Profile。可从 `assets/dawn-engine.profile.example.json` 开始；软件 ID 只能来自随 Skill 发布的 `catalog/v1.json`。`packages` 的每一项必须是带 `id` 和 `state` 的对象，不是字符串：
+3. 让用户选择或创建符合 V1 格式的 JSON Profile。可从 `assets/dawn-engine.profile.example.json` 开始；软件 ID 只能来自随 Skill 发布的 `catalog/v1.json`。`packages` 的每一项必须是带 `id` 和 `state` 的对象，不是字符串。若用户要求配置 Git identity，先收集非敏感的 `name` 和 `email`，并使用 `git-identity` 条目：
 
    ```json
    {
@@ -40,6 +40,14 @@ node <skill-directory>/bin/dawn.mjs
      "packages": [
        { "id": "homebrew", "state": "present" },
        { "id": "git", "state": "present" },
+       {
+         "id": "git-identity",
+         "state": "present",
+         "params": {
+           "name": "Your Name",
+           "email": "you@example.com"
+         }
+       },
        { "id": "node", "state": "present" },
        { "id": "vscode", "state": "present" }
      ]

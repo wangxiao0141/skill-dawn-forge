@@ -8738,7 +8738,7 @@ import { existsSync as existsSync3 } from "node:fs";
 import { dirname as dirname3, join as join5, resolve as resolve4 } from "node:path";
 
 // src/executor/index.ts
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { lstatSync as lstatSync2, readFileSync as readFileSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join3, resolve as resolve2 } from "node:path";
@@ -9175,9 +9175,12 @@ function parseEvent(value, lineNumber) {
   const event = value.event;
   const eventType = event.type;
   const hasActionMessage = typeof event.actionId === "string" && typeof event.message === "string";
-  const valid = eventType === "run-started" || ["action-started", "action-succeeded", "action-skipped"].includes(
-    eventType
-  ) && hasActionMessage || eventType === "action-failed" && hasActionMessage && typeof event.critical === "boolean" || eventType === "action-blocked" && typeof event.actionId === "string" && typeof event.reason === "string" || eventType === "needs-user" && typeof event.actionId === "string" && typeof event.instruction === "string" || eventType === "run-completed" && typeof event.summary === "string" || eventType === "run-stopped" && typeof event.reason === "string";
+  const valid = eventType === "run-started" || [
+    "action-started",
+    "action-progress",
+    "action-succeeded",
+    "action-skipped"
+  ].includes(eventType) && hasActionMessage || eventType === "action-failed" && hasActionMessage && typeof event.critical === "boolean" || eventType === "action-blocked" && typeof event.actionId === "string" && typeof event.reason === "string" || eventType === "needs-user" && typeof event.actionId === "string" && typeof event.instruction === "string" || eventType === "run-completed" && typeof event.summary === "string" || eventType === "run-stopped" && typeof event.reason === "string";
   if (!valid) {
     throw new JournalConsistencyError(
       `journal \u7B2C ${lineNumber} \u884C\u4E8B\u4EF6\u65E0\u6548\u3002`
@@ -9254,6 +9257,9 @@ function verifySnapshot(runId, snapshot, events) {
           "needs_user",
           "succeeded"
         ]);
+        break;
+      case "action-progress":
+        transition(item.event.actionId, "running", ["running"]);
         break;
       case "action-skipped":
         transition(item.event.actionId, "skipped", ["running"]);
@@ -9570,6 +9576,51 @@ var GitProvider = class {
 };
 var gitProvider = new GitProvider();
 
+// src/providers/git-identity.ts
+function isSafeValue(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 200 && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value);
+}
+function parseGitIdentityParams(params) {
+  if (Object.keys(params).length !== 2 || !Object.hasOwn(params, "name") || !Object.hasOwn(params, "email") || !isSafeValue(params.name) || !isSafeValue(params.email) || !/^[^@\s]+@[^@\s]+$/.test(params.email)) {
+    throw new Error(
+      "Git identity requires safe, non-empty name and email parameters."
+    );
+  }
+  return { name: params.name, email: params.email };
+}
+var GitIdentityProvider = class {
+  async check(params, ssh) {
+    const expected = parseGitIdentityParams(params);
+    const name = await ssh.run("git config --global --get user.name");
+    const email = await ssh.run("git config --global --get user.email");
+    if (name.exitCode !== 0 || email.exitCode !== 0) {
+      return { installed: false };
+    }
+    return {
+      installed: name.stdout.trimEnd() === expected.name && email.stdout.trimEnd() === expected.email
+    };
+  }
+  async apply(params, ssh) {
+    const identity = parseGitIdentityParams(params);
+    const encodedName = Buffer.from(identity.name, "utf8").toString("base64");
+    const encodedEmail = Buffer.from(identity.email, "utf8").toString(
+      "base64"
+    );
+    const result = await ssh.run(
+      `git config --global user.name "$(printf '%s' '${encodedName}' | base64 -D)" && git config --global user.email "$(printf '%s' '${encodedEmail}' | base64 -D)"`
+    );
+    if (result.exitCode !== 0) {
+      throw new Error("Failed to configure the global Git identity.");
+    }
+  }
+  async verify(params, ssh) {
+    if (!(await this.check(params, ssh)).installed) {
+      throw new Error("Global Git identity does not match the approved Plan.");
+    }
+  }
+};
+var gitIdentityProvider = new GitIdentityProvider();
+
 // src/providers/index.ts
 function getProvider(providerName) {
   switch (providerName) {
@@ -9577,6 +9628,8 @@ function getProvider(providerName) {
       return homebrewProvider;
     case "git":
       return gitProvider;
+    case "git-identity":
+      return gitIdentityProvider;
     default:
       throw new Error(`Unknown provider: ${providerName}`);
   }
@@ -9601,6 +9654,7 @@ import { randomUUID } from "node:crypto";
 
 // src/inspector/index.ts
 import { spawnSync } from "node:child_process";
+import { TextDecoder } from "node:util";
 var InspectorError = class extends Error {
   exitCode = ExitCode.ActionFailed;
   constructor(message) {
@@ -9618,8 +9672,31 @@ var macosInspectorCommand = [
   '[ -n "$BREW" ] || [ ! -x /usr/local/bin/brew ] || BREW=/usr/local/bin/brew',
   `if [ -n "$BREW" ]; then printf '%s\\n' BREW:1; "$BREW" --version | head -n 1; "$BREW" list --formula; printf '%s\\n' __CASKS__; "$BREW" list --cask; else printf '%s\\n\\n%s\\n' BREW:0 __CASKS__; fi`,
   "printf '%s\\n' __GIT__",
-  "if command -v git >/dev/null 2>&1; then printf '%s\\n' GIT:1; git --version; else printf '%s\\n\\n' GIT:0; fi"
+  "if command -v git >/dev/null 2>&1; then printf '%s\\n' GIT:1; git --version; else printf '%s\\n\\n' GIT:0; fi",
+  "printf '%s\\n' __GIT_NAME__",
+  `if command -v git >/dev/null 2>&1; then GIT_NAME="$(git config --global --get user.name 2>/dev/null || true)"; printf '%s' "$GIT_NAME" | base64 | tr -d '\\n'; fi; printf '\\n'`,
+  "printf '%s\\n' __GIT_EMAIL__",
+  `if command -v git >/dev/null 2>&1; then GIT_EMAIL="$(git config --global --get user.email 2>/dev/null || true)"; printf '%s' "$GIT_EMAIL" | base64 | tr -d '\\n'; fi; printf '\\n'`
 ].join("; ");
+function decodeInspectorBase64(value) {
+  if (value === "") {
+    return "";
+  }
+  if (value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+    value
+  )) {
+    throw new InspectorError("macOS Inspector \u8FD4\u56DE\u4E86\u65E0\u6548 Git identity\u3002");
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.toString("base64") !== value) {
+    throw new InspectorError("macOS Inspector \u8FD4\u56DE\u4E86\u65E0\u6548 Git identity\u3002");
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(decoded);
+  } catch {
+    throw new InspectorError("macOS Inspector \u8FD4\u56DE\u4E86\u65E0\u6548 Git identity\u3002");
+  }
+}
 var NodeInspectorSshExecutor = class {
   #ssh;
   constructor(ssh = process.env.DAWN_SSH ?? "ssh") {
@@ -9656,7 +9733,9 @@ async function inspectMacos(connection, ssh) {
   const lines = result.stdout.replaceAll("\r", "").split("\n");
   const caskMarker = lines.indexOf("__CASKS__");
   const gitMarker = lines.indexOf("__GIT__");
-  if (lines[0] !== "__DAWN_FORGE_INSPECTOR_V1__" || !lines[1] || !/^[0-9]+$/.test(lines[2] ?? "") || !/^BREW:[01]$/.test(lines[3] ?? "") || caskMarker < 5 || gitMarker <= caskMarker || !/^GIT:[01]$/.test(lines[gitMarker + 1] ?? "")) {
+  const gitNameMarker = lines.indexOf("__GIT_NAME__");
+  const gitEmailMarker = lines.indexOf("__GIT_EMAIL__");
+  if (lines[0] !== "__DAWN_FORGE_INSPECTOR_V1__" || !lines[1] || !/^[0-9]+$/.test(lines[2] ?? "") || !/^BREW:[01]$/.test(lines[3] ?? "") || caskMarker < 5 || gitMarker <= caskMarker || gitNameMarker <= gitMarker + 1 || gitEmailMarker <= gitNameMarker || !/^GIT:[01]$/.test(lines[gitMarker + 1] ?? "")) {
     throw new InspectorError("macOS Inspector \u8FD4\u56DE\u4E86\u65E0\u6548\u5FEB\u7167\u3002");
   }
   const freeDiskKilobytes = Number.parseInt(lines[2], 10);
@@ -9671,6 +9750,10 @@ async function inspectMacos(connection, ssh) {
   const gitInstalled = lines[gitMarker + 1] === "GIT:1";
   const gitOutput = lines[gitMarker + 2]?.trim() ?? "";
   const gitVersion = gitOutput.match(/^git version (.+)$/)?.[1];
+  const gitUserName = decodeInspectorBase64(lines.slice(gitNameMarker + 1, gitEmailMarker).join("\n").trimEnd());
+  const gitUserEmail = decodeInspectorBase64(
+    lines.slice(gitEmailMarker + 1).join("\n").trimEnd()
+  );
   if (homebrewInstalled && !homebrewVersion || !homebrewInstalled && (formulae.length > 0 || casks.length > 0) || gitInstalled && !gitVersion) {
     throw new InspectorError("macOS Inspector \u8FD4\u56DE\u4E86\u4E0D\u4E00\u81F4\u7684\u5FEB\u7167\u3002");
   }
@@ -9686,7 +9769,9 @@ async function inspectMacos(connection, ssh) {
     },
     git: {
       installed: gitInstalled,
-      ...gitVersion ? { version: gitVersion } : {}
+      ...gitVersion ? { version: gitVersion } : {},
+      ...gitUserName ? { userName: gitUserName } : {},
+      ...gitUserEmail ? { userEmail: gitUserEmail } : {}
     }
   };
 }
@@ -9702,7 +9787,10 @@ var PlannerInputError = class extends Error {
 function actionId(packageId) {
   return `action-${packageId}`;
 }
-function installed(entry, snapshot) {
+function installed(entry, snapshot, params = entry.params) {
+  if (entry.provider === "git-identity") {
+    return snapshot.git.userName === params.name && snapshot.git.userEmail === params.email;
+  }
   if (entry.provider === "git") {
     return snapshot.git.installed;
   }
@@ -9717,8 +9805,8 @@ function installed(entry, snapshot) {
   }
   return void 0;
 }
-function classify(entry, desiredState, snapshot) {
-  const current = installed(entry, snapshot);
+function classify(entry, desiredState, snapshot, params = entry.params) {
+  const current = installed(entry, snapshot, params);
   if (current === void 0) {
     return "conflict";
   }
@@ -9865,11 +9953,15 @@ function createPlan(input) {
   }
   validateCatalogGraph(catalogById);
   const requested = resolveRequestedEntries(input.profile, catalogById);
+  const profileParams = new Map(
+    input.profile.packages.filter((item) => item.params !== void 0).map((item) => [item.id, item.params])
+  );
   const orderedIds = topologicalOrder(requested, catalogById);
   const actions = orderedIds.flatMap((id) => {
     const entry = catalogById.get(id);
     const desiredState = requested.get(id);
-    const type = classify(entry, desiredState, input.snapshot);
+    const params = entry.provider === "git-identity" ? profileParams.get(id) ?? entry.params : entry.params;
+    const type = classify(entry, desiredState, input.snapshot, params);
     if (desiredState === "absent" && type === "skip") {
       return [];
     }
@@ -9878,7 +9970,7 @@ function createPlan(input) {
       type,
       packageId: id,
       provider: entry.provider,
-      params: entry.params,
+      params,
       critical: entry.critical,
       dependsOn: desiredState === "present" ? entry.dependsOn.filter((dependency) => requested.has(dependency)).map(actionId).sort() : []
     }];
@@ -9918,7 +10010,21 @@ function parseProfile(value) {
     throw new PlannerInputError("Profile \u7ED3\u6784\u65E0\u6548\u3002");
   }
   for (const item of profile.packages) {
-    if (item === null || typeof item !== "object" || Array.isArray(item) || typeof item.id !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(item.id) || item.state !== "present" && item.state !== "absent" || Object.keys(item).some((key) => key !== "id" && key !== "state")) {
+    const isItemRecord = item !== null && typeof item === "object" && !Array.isArray(item);
+    const keys = isItemRecord ? Object.keys(item) : [];
+    const params = isItemRecord ? item.params : void 0;
+    let validGitIdentity = false;
+    if (isItemRecord && item.id === "git-identity" && item.state === "present" && params !== null && typeof params === "object" && !Array.isArray(params)) {
+      try {
+        parseGitIdentityParams(params);
+        validGitIdentity = true;
+      } catch {
+        validGitIdentity = false;
+      }
+    }
+    if (item === null || typeof item !== "object" || Array.isArray(item) || typeof item.id !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(item.id) || item.state !== "present" && item.state !== "absent" || keys.some(
+      (key) => key !== "id" && key !== "state" && key !== "params"
+    ) || (item.id === "git-identity" ? !validGitIdentity : params !== void 0)) {
       throw new PlannerInputError("Profile packages \u7ED3\u6784\u65E0\u6548\u3002");
     }
   }
@@ -10088,7 +10194,74 @@ function parsePlan(value) {
   }
   return value;
 }
-function readApprovedPlan(path, approval) {
+function sameStringArray(actual, expected) {
+  return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+}
+function validatePlanAgainstCatalog(plan, catalog) {
+  const catalogById = new Map(catalog.map((entry) => [entry.id, entry]));
+  const actionByPackageId = /* @__PURE__ */ new Map();
+  for (const action of plan.spec.actions) {
+    if (actionByPackageId.has(action.packageId)) {
+      throw new PlanApprovalError(
+        `Plan \u91CD\u590D\u5F15\u7528 Catalog \u6761\u76EE\uFF1A${action.packageId}`
+      );
+    }
+    actionByPackageId.set(action.packageId, action);
+  }
+  for (const action of plan.spec.actions) {
+    const entry = catalogById.get(action.packageId);
+    if (!entry) {
+      throw new PlanApprovalError(
+        `Plan Action \u4E0D\u5C5E\u4E8E ${plan.spec.catalogVersion} Catalog\uFF1A${action.packageId}`
+      );
+    }
+    if (action.actionId !== `action-${entry.id}` || action.provider !== entry.provider || action.critical !== entry.critical) {
+      throw new PlanApprovalError(
+        `Plan Action \u4E0E Catalog \u5B9A\u4E49\u4E0D\u4E00\u81F4\uFF1A${action.packageId}`
+      );
+    }
+    if (entry.provider === "git-identity") {
+      try {
+        parseGitIdentityParams(action.params);
+      } catch {
+        throw new PlanApprovalError("Plan \u4E2D\u7684 Git identity \u53C2\u6570\u65E0\u6548\u3002");
+      }
+    } else if (computeProfileHash(action.params) !== computeProfileHash(entry.params)) {
+      throw new PlanApprovalError(
+        `Plan Action \u53C2\u6570\u4E0E Catalog \u4E0D\u4E00\u81F4\uFF1A${action.packageId}`
+      );
+    }
+    const permittedDependencies = new Set(
+      entry.dependsOn.map((id) => `action-${id}`)
+    );
+    if (action.dependsOn.some(
+      (dependency) => !permittedDependencies.has(dependency)
+    )) {
+      throw new PlanApprovalError(
+        `Plan Action \u4F9D\u8D56\u4E0E Catalog \u4E0D\u4E00\u81F4\uFF1A${action.packageId}`
+      );
+    }
+    if (action.type !== "conflict") {
+      const expectedDependencies = entry.dependsOn.map((id) => `action-${id}`).sort();
+      if (!sameStringArray(action.dependsOn, expectedDependencies)) {
+        throw new PlanApprovalError(
+          `Plan Action \u7F3A\u5C11 Catalog \u4F9D\u8D56\uFF1A${action.packageId}`
+        );
+      }
+    }
+  }
+}
+function loadApprovedCatalog(catalogDirectory, catalogVersion) {
+  try {
+    return loadCatalog(catalogDirectory, catalogVersion);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new PlanApprovalError(
+      `\u65E0\u6CD5\u9A8C\u8BC1 Plan \u7ED1\u5B9A\u7684 Catalog\uFF1A${message}`
+    );
+  }
+}
+function readApprovedPlan(path, approval, catalogDirectory) {
   if (!/^[0-9a-f]{64}$/.test(approval)) {
     throw new PlanApprovalError("--approve \u5FC5\u987B\u662F 64 \u4F4D\u5C0F\u5199 SHA-256\u3002");
   }
@@ -10110,6 +10283,12 @@ function readApprovedPlan(path, approval) {
       `Plan hash \u4E0D\u5339\u914D\uFF1B\u5B9E\u9645\u4E3A ${computed}\u3002`
     );
   }
+  if (catalogDirectory !== void 0) {
+    validatePlanAgainstCatalog(
+      plan,
+      loadApprovedCatalog(catalogDirectory, plan.spec.catalogVersion)
+    );
+  }
   return plan;
 }
 var NodeProviderSshExecutor = class {
@@ -10121,22 +10300,74 @@ var NodeProviderSshExecutor = class {
     this.#alias = alias;
     this.#ssh = ssh;
   }
-  async run(command) {
+  async run(command, options) {
     return new Promise((resolvePromise) => {
-      execFile(
+      const child = spawn(
         this.#ssh,
         ["-F", this.#configPath, this.#alias, command],
         {
-          encoding: "utf8",
-          timeout: 2 * 60 * 60 * 1e3,
           windowsHide: true,
-          maxBuffer: 4 * 1024 * 1024
-        },
-        (error, stdout, stderr) => {
-          const exitCode = error && "code" in error && typeof error.code === "number" ? error.code : error ? 1 : 0;
-          resolvePromise({ stdout, stderr, exitCode });
+          stdio: ["ignore", "pipe", "pipe"]
         }
       );
+      const maximumCapturedBytes = 4 * 1024 * 1024;
+      const stdout = [];
+      const stderr = [];
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let settled = false;
+      let timedOut = false;
+      const capture = (values, chunk, capturedBytes) => {
+        const remaining = maximumCapturedBytes - capturedBytes;
+        if (remaining <= 0) {
+          return capturedBytes;
+        }
+        const value = chunk.subarray(0, remaining);
+        values.push(value);
+        return capturedBytes + value.length;
+      };
+      const notifyOutput = (stream) => {
+        try {
+          options?.onOutput?.(stream);
+        } catch {
+        }
+      };
+      child.stdout.on("data", (chunk) => {
+        stdoutBytes = capture(stdout, chunk, stdoutBytes);
+        notifyOutput("stdout");
+      });
+      child.stderr.on("data", (chunk) => {
+        stderrBytes = capture(stderr, chunk, stderrBytes);
+        notifyOutput("stderr");
+      });
+      const timeout = setTimeout(
+        () => {
+          timedOut = true;
+          child.kill();
+        },
+        2 * 60 * 60 * 1e3
+      );
+      timeout.unref();
+      const finish = (exitCode, error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        if (error) {
+          stderr.push(Buffer.from(error.message, "utf8"));
+        }
+        if (timedOut) {
+          stderr.push(Buffer.from("SSH command timed out.", "utf8"));
+        }
+        resolvePromise({
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+          exitCode
+        });
+      };
+      child.on("error", (error) => finish(1, error));
+      child.on("close", (code) => finish(code ?? 1));
     });
   }
 };
@@ -10155,6 +10386,34 @@ function descendants(failedActionId, actions) {
     }
   }
   return result;
+}
+function withProgress(ssh, action, report, now, runId) {
+  let lastProgressAt = 0;
+  return {
+    run(command) {
+      return ssh.run(command, {
+        onOutput() {
+          const current = Date.now();
+          if (lastProgressAt !== 0 && current - lastProgressAt < 5e3) {
+            return;
+          }
+          lastProgressAt = current;
+          try {
+            report({
+              timestamp: now().toISOString(),
+              runId,
+              event: {
+                type: "action-progress",
+                actionId: action.actionId,
+                message: `${action.packageId} \u6B63\u5728\u6267\u884C\uFF1B\u5DF2\u6536\u5230\u8FDC\u7AEF\u8F93\u51FA\u3002`
+              }
+            });
+          } catch {
+          }
+        }
+      });
+    }
+  };
 }
 async function executePlan(options) {
   const plan = parsePlan(options.plan);
@@ -10239,23 +10498,41 @@ async function executePlan(options) {
       }
       let operationError;
       let wasAlreadyInstalled = false;
+      let progressWrites = Promise.resolve();
+      const actionSsh = withProgress(
+        options.ssh,
+        action,
+        (event) => {
+          progressWrites = progressWrites.then(async () => {
+            await journal.commit(event, snapshot());
+            events.push(event);
+            try {
+              options.emit?.(event);
+            } catch {
+            }
+          });
+        },
+        now,
+        runId
+      );
       try {
         if (action.type === "conflict") {
           throw new Error(`${action.packageId} \u5B58\u5728\u65E0\u6CD5\u81EA\u52A8\u5904\u7406\u7684\u51B2\u7A81\u3002`);
         }
         const provider = getProvider(action.provider);
-        const check = await provider.check(action.params, options.ssh);
+        const check = await provider.check(action.params, actionSsh);
         wasAlreadyInstalled = check.installed;
         if (!check.installed) {
           if (action.type === "skip") {
             throw new Error(`${action.packageId} \u4E0D\u518D\u6EE1\u8DB3 skip \u6761\u4EF6\u3002`);
           }
-          await provider.apply(action.params, options.ssh);
-          await provider.verify(action.params, options.ssh);
+          await provider.apply(action.params, actionSsh);
+          await provider.verify(action.params, actionSsh);
         }
       } catch (error) {
         operationError = error;
       }
+      await progressWrites;
       if (operationError === void 0) {
         const finishedAt2 = now().toISOString();
         states.set(action.actionId, "succeeded");
@@ -10344,7 +10621,7 @@ async function executePlan(options) {
     journal.close();
   }
 }
-function readStoredPlan(runId, runsDirectory) {
+function readStoredPlan(runId, runsDirectory, catalogDirectory) {
   const { snapshot } = readRun(runId, { runsDirectory });
   const planPath = join3(runsDirectory, runId, "plan.json");
   const stat = lstatSync2(planPath);
@@ -10361,21 +10638,28 @@ function readStoredPlan(runId, runsDirectory) {
   if (computePlanHash(plan.spec) !== plan.planHash || plan.planHash !== snapshot.planHash) {
     throw new PlanApprovalError("Run \u7684 Plan \u4E0E snapshot hash \u4E0D\u5339\u914D\u3002");
   }
+  if (catalogDirectory !== void 0) {
+    validatePlanAgainstCatalog(
+      plan,
+      loadApprovedCatalog(catalogDirectory, plan.spec.catalogVersion)
+    );
+  }
   return { plan, snapshot };
 }
-function readRunPlan(runId, runsDirectory = join3(homedir2(), ".dawn-forge", "runs")) {
-  return readStoredPlan(runId, runsDirectory).plan;
+function readRunPlan(runId, runsDirectory = join3(homedir2(), ".dawn-forge", "runs"), catalogDirectory) {
+  return readStoredPlan(runId, runsDirectory, catalogDirectory).plan;
 }
 async function resumeRun(options) {
   const runsDirectory = options.runsDirectory ?? join3(homedir2(), ".dawn-forge", "runs");
-  readStoredPlan(options.runId, runsDirectory);
+  readStoredPlan(options.runId, runsDirectory, options.catalogDirectory);
   const journal = openJournal(options.runId, { runsDirectory });
   const now = options.now ?? (() => /* @__PURE__ */ new Date());
   const events = [];
   try {
     const { plan, snapshot: storedSnapshot } = readStoredPlan(
       options.runId,
-      runsDirectory
+      runsDirectory,
+      options.catalogDirectory
     );
     const states = new Map(
       storedSnapshot.actions.map((action) => [action.actionId, action.state])
@@ -10601,23 +10885,41 @@ async function resumeRun(options) {
       }
       let operationError;
       let wasAlreadyInstalled = false;
+      let progressWrites = Promise.resolve();
+      const actionSsh = withProgress(
+        options.ssh,
+        action,
+        (event) => {
+          progressWrites = progressWrites.then(async () => {
+            await journal.commit(event, snapshot());
+            events.push(event);
+            try {
+              options.emit?.(event);
+            } catch {
+            }
+          });
+        },
+        now,
+        options.runId
+      );
       try {
         if (action.type === "conflict") {
           throw new Error(`${action.packageId} \u5B58\u5728\u65E0\u6CD5\u81EA\u52A8\u5904\u7406\u7684\u51B2\u7A81\u3002`);
         }
         const provider = getProvider(action.provider);
-        const check = await provider.check(action.params, options.ssh);
+        const check = await provider.check(action.params, actionSsh);
         wasAlreadyInstalled = check.installed;
         if (!check.installed) {
           if (action.type === "skip") {
             throw new Error(`${action.packageId} \u4E0D\u518D\u6EE1\u8DB3 skip \u6761\u4EF6\u3002`);
           }
-          await provider.apply(action.params, options.ssh);
-          await provider.verify(action.params, options.ssh);
+          await provider.apply(action.params, actionSsh);
+          await provider.verify(action.params, actionSsh);
         }
       } catch (error) {
         operationError = error;
       }
+      await progressWrites;
       if (operationError !== void 0) {
         if (await failAction(action, operationError)) {
           return {
@@ -10662,7 +10964,11 @@ async function resumeRun(options) {
 }
 async function verifyRun(options) {
   const runsDirectory = options.runsDirectory ?? join3(homedir2(), ".dawn-forge", "runs");
-  const { plan, snapshot } = readStoredPlan(options.runId, runsDirectory);
+  const { plan, snapshot } = readStoredPlan(
+    options.runId,
+    runsDirectory,
+    options.catalogDirectory
+  );
   const states = new Map(
     snapshot.actions.map((action) => [action.actionId, action.state])
   );
@@ -11819,6 +12125,7 @@ function emitRunEvent(event, format, stdout) {
       stdout(`Run ${event.runId}`);
       break;
     case "action-started":
+    case "action-progress":
     case "action-succeeded":
     case "action-skipped":
     case "action-failed":
@@ -11863,9 +12170,6 @@ function defaultTargetManager(stdout) {
   });
 }
 function resolveCatalogDirectory(entryPath2 = process.argv[1]) {
-  if (process.env.DAWN_CATALOG_DIRECTORY) {
-    return resolve4(process.env.DAWN_CATALOG_DIRECTORY);
-  }
   const entryDirectory = dirname3(
     resolve4(entryPath2 ?? fileURLToPath(import.meta.url))
   );
@@ -11973,7 +12277,8 @@ async function runCli(args, dependencies = {}) {
       );
       const plan = readApprovedPlan(
         requiredOption(options2, "--plan"),
-        requiredOption(options2, "--approve")
+        requiredOption(options2, "--approve"),
+        dependencies.catalogDirectory ?? resolveCatalogDirectory()
       );
       const requestedFormat = options2.get("--format");
       if (requestedFormat !== void 0 && requestedFormat !== "jsonl") {
@@ -12023,7 +12328,12 @@ async function runCli(args, dependencies = {}) {
       const result2 = dependencies.resumeExecutor ? await dependencies.resumeExecutor({ runId: runId2, emit }) : await (async () => {
         const homeDirectory = dependencies.homeDirectory ?? homedir4();
         const runsDirectory = cliRunsDirectory(dependencies);
-        const plan = readRunPlan(runId2, runsDirectory);
+        const catalogDirectory = dependencies.catalogDirectory ?? resolveCatalogDirectory();
+        const plan = readRunPlan(
+          runId2,
+          runsDirectory,
+          catalogDirectory
+        );
         const manager = dependencies.targetManager ?? defaultTargetManager(stdout);
         const resumeTarget = async (target) => {
           if (target.targetFingerprint !== plan.spec.targetFingerprint) {
@@ -12042,6 +12352,7 @@ async function runCli(args, dependencies = {}) {
               target.locators.sshAlias
             ),
             runsDirectory,
+            catalogDirectory,
             emit
           });
         };
@@ -12054,7 +12365,12 @@ async function runCli(args, dependencies = {}) {
     const result = dependencies.verifyExecutor ? await dependencies.verifyExecutor({ runId }) : await (async () => {
       const homeDirectory = dependencies.homeDirectory ?? homedir4();
       const runsDirectory = cliRunsDirectory(dependencies);
-      const plan = readRunPlan(runId, runsDirectory);
+      const catalogDirectory = dependencies.catalogDirectory ?? resolveCatalogDirectory();
+      const plan = readRunPlan(
+        runId,
+        runsDirectory,
+        catalogDirectory
+      );
       const manager = dependencies.targetManager ?? defaultTargetManager(stdout);
       const verifyTarget = async (target) => {
         if (target.targetFingerprint !== plan.spec.targetFingerprint) {
@@ -12072,7 +12388,8 @@ async function runCli(args, dependencies = {}) {
             ),
             target.locators.sshAlias
           ),
-          runsDirectory
+          runsDirectory,
+          catalogDirectory
         });
       };
       return manager.withVerifiedTarget ? manager.withVerifiedTarget(plan.spec.targetId, verifyTarget) : verifyTarget(await manager.inspect(plan.spec.targetId));

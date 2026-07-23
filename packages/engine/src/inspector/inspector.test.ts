@@ -27,6 +27,10 @@ test("macOS Inspector 用单次 SSH 收集只读结构化快照", async () => {
           "__GIT__",
           "GIT:1",
           "git version 2.50.1",
+          "__GIT_NAME__",
+          Buffer.from("__GIT_EMAIL__", "utf8").toString("base64"),
+          "__GIT_EMAIL__",
+          Buffer.from("wang@example.com", "utf8").toString("base64"),
           "",
         ].join("\n"),
       };
@@ -55,6 +59,8 @@ test("macOS Inspector 用单次 SSH 收集只读结构化快照", async () => {
     git: {
       installed: true,
       version: "2.50.1",
+      userName: "__GIT_EMAIL__",
+      userEmail: "wang@example.com",
     },
   });
   assert.match(String((calls[0] as { command: string }).command), /df -Pk/);
@@ -65,5 +71,9 @@ test("macOS Inspector 用单次 SSH 收集只读结构化快照", async () => {
   assert.match(
     String((calls[0] as { command: string }).command),
     /list --cask/,
+  );
+  assert.match(
+    String((calls[0] as { command: string }).command),
+    /GIT_NAME="\$\(git config.*user\.name.*printf '%s'.*base64/,
   );
 });
