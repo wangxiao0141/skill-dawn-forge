@@ -54,7 +54,7 @@ Winget 不适用而使用 `.msi` 或 `.exe` 时：
 
 ## 可选 Clash Verge Rev
 
-唯一匹配候选 profile 以 `required: true`、`official-download` 明确列出 `Clash Verge Rev` 且尚未安装时始终处理；最小官方端点直连探测只决定是否必须先启用代理和记录实际 route。`required: false` 不进入本阶段。SSH `finalizeCommand` 成功后，只检查目标 architecture、Clash Verge Rev 是否已安装、最小直连端点和控制机官方 stable 下载源。未安装时先用 `scripts/plan-installation.mjs network-bootstrap` 发布 bundle，再把 `artifact-request.json` 直接交给 `scripts/artifact-cache.mjs fetch --request`；按 `references/network-bootstrap.md` 的 canonical cache、`.partial` 和单一前台 download owner 规则取得 installer，校验后只通过 `scripts/transfer-artifact.mjs` 传到目标机 `Downloads/dawn-forge/artifacts/`。不先扫描完整应用列表、CLI、PATH、package manager 或所有安装端点。Agent 不运行 installer，用户手动安装并处理 UAC。
+Windows 目标机流程不在 V1 范围内；不得通过 `dawn target bootstrap` 注册 Windows Target。以下旧流程仅作后续版本设计参考：唯一匹配候选 profile 以 `required: true`、`official-download` 明确列出 `Clash Verge Rev` 且尚未安装时始终处理；最小官方端点直连探测只决定是否必须先启用代理和记录实际 route。
 
 下载期间按 `references/configuration-handoff.md` 同时准备订阅或其他配置文件；缺少秘密时让用户在控制机本地运行 `scripts/collect-private-input.mjs`，不得在聊天中索要。installer 通过 Authenticode/publisher 校验后，用户手动安装、启动、应用已传配置并完成 GUI 授权。完成后读取目标机实际系统 proxy/TUN 状态，并验证当前安装计划所需的官方端点。
 

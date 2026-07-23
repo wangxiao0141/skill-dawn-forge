@@ -30,7 +30,7 @@ macOS 的名称各自含义不同：
 
 ## Clash Verge Rev 网络引导
 
-唯一匹配候选 profile 以 `required: true`、`official-download` 明确列出 `Clash Verge Rev` 且尚未安装时始终处理；最小官方端点直连探测只决定是否必须先启用代理和记录实际 route。`required: false` 不进入本阶段。SSH `finalizeCommand` 成功后，Agent 只检查目标 architecture、`/Applications/Clash Verge.app` 是否存在、最小直连端点和控制机官方 stable 下载源，然后处理 installer：
+唯一匹配候选 profile 以 `required: true`、`official-download` 明确列出 `Clash Verge Rev` 且尚未安装时始终处理；最小官方端点直连探测只决定是否必须先启用代理和记录实际 route。`required: false` 不进入本阶段。`dawn target bootstrap` 成功并写入 Target 后，Agent 只检查目标 architecture、`/Applications/Clash Verge.app` 是否存在、最小直连端点和控制机官方 stable 下载源，然后处理 installer：
 
 - 未安装时，先用 `scripts/plan-installation.mjs network-bootstrap` 发布 bundle，再把其 `artifact-request.json` 直接交给 `scripts/artifact-cache.mjs fetch --request`；按 `references/network-bootstrap.md` 的 canonical cache、单一前台 owner 和 `.partial` 原子发布规则取得与目标架构匹配的官方 stable artifact，再通过 `scripts/transfer-artifact.mjs` 传到 `~/Downloads/dawn-forge/artifacts/` 并核对两端 SHA-256/size；
 - 已安装时，不重复下载安装包；

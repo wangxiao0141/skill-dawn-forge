@@ -6,7 +6,9 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { openJournal, type RunSnapshot } from "../journal/index.ts";
-import type { RunEvent } from "../protocol/index.ts";
+import type { RunEvent, Target } from "../protocol/index.ts";
+import { IdentityConflictError } from "../target/index.ts";
+import { runCli } from "./index.ts";
 
 interface CommandResult {
   readonly status: number | null;
@@ -70,6 +72,114 @@ test("尚未实现和未知的命令给出明确说明并以 2 退出", () => {
   const unknown = runDawn(["unknown"]);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /未知命令：unknown/);
+});
+
+test("target CLI 解析 bootstrap、inspect、revoke 并输出身份摘要", async () => {
+  const target: Target = {
+    targetId: "office-mac",
+    displayName: "Office Mac",
+    platform: "macos",
+    locators: { sshAlias: "dawn-office-mac" },
+    identityEvidence: {
+      sshHostKeyFingerprint: "SHA256:host-a",
+      machineId: "11111111-2222-3333-4444-555555555555",
+      architecture: "arm64",
+      remoteUser: "wangxiao",
+    },
+    targetFingerprint: "a".repeat(64),
+    registeredAt: "2026-07-23T12:00:00.000Z",
+  };
+  const calls: unknown[] = [];
+  const targetManager = {
+    async bootstrap(input: unknown) {
+      calls.push(["bootstrap", input]);
+      return target;
+    },
+    async inspect(targetId: string) {
+      calls.push(["inspect", targetId]);
+      return target;
+    },
+    async revoke(targetId: string) {
+      calls.push(["revoke", targetId]);
+    },
+  };
+  const output: string[] = [];
+  const dependencies = {
+    targetManager,
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => output.push(`error:${message}`),
+  };
+
+  assert.equal(
+    await runCli(
+      [
+        "target",
+        "bootstrap",
+        "--host",
+        "mac-mini.local",
+        "--user",
+        "wangxiao",
+        "--name",
+        "Office Mac",
+      ],
+      dependencies,
+    ),
+    0,
+  );
+  assert.equal(
+    await runCli(
+      ["target", "inspect", "--target", "office-mac"],
+      dependencies,
+    ),
+    0,
+  );
+  assert.equal(
+    await runCli(
+      ["target", "revoke", "--target", "office-mac"],
+      dependencies,
+    ),
+    0,
+  );
+
+  assert.deepEqual(calls, [
+    [
+      "bootstrap",
+      {
+        host: "mac-mini.local",
+        user: "wangxiao",
+        name: "Office Mac",
+      },
+    ],
+    ["inspect", "office-mac"],
+    ["revoke", "office-mac"],
+  ]);
+  assert.match(output.join("\n"), /machineId: 11111111/);
+  assert.match(output.join("\n"), /远端公钥和本地记录均已删除/);
+});
+
+test("target CLI 将身份冲突映射为退出码 30", async () => {
+  const errors: string[] = [];
+  const exitCode = await runCli(
+    ["target", "inspect", "--target", "office-mac"],
+    {
+      targetManager: {
+        async bootstrap() {
+          throw new Error("not used");
+        },
+        async inspect() {
+          throw new IdentityConflictError(["machineId"]);
+        },
+        async revoke() {
+          throw new Error("not used");
+        },
+      },
+      stdout: () => {},
+      stderr: (message) => errors.push(message),
+    },
+  );
+
+  assert.equal(exitCode, 30);
+  assert.match(errors.join("\n"), /machineId/);
 });
 
 test("dawn run show 输出 Action 状态和失败信息", async () => {

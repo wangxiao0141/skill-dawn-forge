@@ -18,6 +18,10 @@ const canonicalSkill = join(repositoryRoot, "skills", "dawn-forge");
 const localSkill = join(repositoryRoot, ".agents", "skills", "dawn-forge");
 const contextPath = join(repositoryRoot, "CONTEXT.md");
 const failures = [];
+const skillText = readUtf8(join(canonicalSkill, "SKILL.md"));
+const targetOnlyMilestone =
+  /Target 注册成功后停止/.test(skillText) &&
+  /等待 Engine 后续能力/.test(skillText);
 
 function fail(contract, detail) {
   failures.push(`${contract}: ${detail}`);
@@ -78,6 +82,37 @@ function checkStageFourExecutionContract() {
   }
   if (!/(?:run[- ]?state|运行状态)/i.test(stageFour)) {
     fail("阶段 4 受控执行", "阶段 4 必须明确以 run-state/运行状态为准。");
+  }
+}
+
+function checkTargetOnlyMilestoneContract() {
+  for (const command of [
+    "dawn target bootstrap",
+    "dawn target inspect",
+    "dawn target revoke",
+  ]) {
+    if (!skillText.includes(command)) {
+      fail("Target 里程碑", "`SKILL.md` 缺少受控命令 `" + command + "`。");
+    }
+  }
+  if (
+    !/Target 注册成功后停止/.test(skillText) ||
+    !/不得.{0,30}(?:手写 SSH|绕过身份检查)/.test(skillText)
+  ) {
+    fail(
+      "Target 里程碑",
+      "`SKILL.md` 必须在 Target 注册后停止，并禁止绕过受控 SSH 身份检查。",
+    );
+  }
+  if (
+    /installKeyCommand|plan-installation\.mjs/.test(skillText) ||
+    (/identity\.json/.test(skillText) &&
+      !/不得.{0,40}identity\.json/.test(skillText))
+  ) {
+    fail(
+      "Target 里程碑",
+      "`SKILL.md` 不得继续引用尚未迁移的旧身份或安装执行入口。",
+    );
   }
 }
 
@@ -405,15 +440,19 @@ function checkLocalSkillDrift() {
   }
 }
 
-checkStageFourExecutionContract();
 checkBatchLimitContract();
 checkNoGiantHomebrewCommand();
-checkExecutionReferenceContracts();
-checkPlanIsNotExecutionBatch();
 checkOptionalClashDoesNotFastPath();
-checkControlledPreflightContract();
-checkNetworkBootstrapApprovalContract();
-checkNetworkLocationContract();
+if (targetOnlyMilestone) {
+  checkTargetOnlyMilestoneContract();
+} else {
+  checkStageFourExecutionContract();
+  checkExecutionReferenceContracts();
+  checkPlanIsNotExecutionBatch();
+  checkControlledPreflightContract();
+  checkNetworkBootstrapApprovalContract();
+  checkNetworkLocationContract();
+}
 checkLocalSkillDrift();
 
 if (failures.length > 0) {

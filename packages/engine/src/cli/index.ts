@@ -1,12 +1,21 @@
+import { pathToFileURL } from "node:url";
+import { createInterface } from "node:readline/promises";
+import { resolve } from "node:path";
+
 import { readRun } from "../journal/index.ts";
-import { ExitCode, type ActionState } from "../protocol/index.ts";
+import { ExitCode, type ActionState, type Target } from "../protocol/index.ts";
+import {
+  createTargetManager,
+  type BootstrapTargetInput,
+  type TargetManager,
+} from "../target/index.ts";
 
 const usage = `用法：dawn <command>
 
 命令：
-  target bootstrap
-  target inspect
-  target revoke
+  target bootstrap --host <host> --user <user> --name <name>
+  target inspect --target <id>
+  target revoke --target <id>
   plan
   apply
   run show --run <runId>
@@ -23,86 +32,223 @@ const stateMarkers: Record<ActionState, string> = {
   needs_user: "?",
 };
 
-function fail(message: string): never {
-  console.error(message);
-  process.exit(ExitCode.ParamError);
+interface TargetCommands {
+  bootstrap(input: BootstrapTargetInput): Promise<Target>;
+  inspect(targetId: string): Promise<Target>;
+  revoke(targetId: string): Promise<void>;
 }
 
-function showRun(args: readonly string[]): void {
-  const runOption = args.indexOf("--run");
-  const runId = runOption === -1 ? undefined : args[runOption + 1];
-  if (!runId || args.length !== 2 || runOption !== 0) {
-    fail("用法：dawn run show --run <runId>");
-  }
+interface CliDependencies {
+  readonly targetManager?: TargetCommands;
+  readonly stdout?: (message: string) => void;
+  readonly stderr?: (message: string) => void;
+}
 
-  try {
-    const { snapshot } = readRun(runId);
-    console.log(`Run ${runId}`);
-    console.log(`Outcome: ${snapshot.outcome ?? "in-progress"}`);
-    console.log("\nActions:");
-    for (const action of snapshot.actions) {
-      const error =
-        action.state === "failed" && action.error ? `：${action.error}` : "";
-      console.log(
-        `  [${stateMarkers[action.state]}] ${action.actionId}  ${action.state}${error}`,
-      );
+function parseOptions(
+  args: readonly string[],
+  allowed: ReadonlySet<string>,
+): Map<string, string> {
+  const options = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (
+      !option?.startsWith("--") ||
+      !allowed.has(option) ||
+      !value ||
+      value.startsWith("--") ||
+      options.has(option)
+    ) {
+      throw new Error("参数无效。");
     }
+    options.set(option, value);
+  }
+  return options;
+}
+
+function requiredOption(options: Map<string, string>, name: string): string {
+  const value = options.get(name);
+  if (!value) {
+    throw new Error(`缺少参数：${name}`);
+  }
+  return value;
+}
+
+function showRun(
+  args: readonly string[],
+  stdout: (message: string) => void,
+): void {
+  const options = parseOptions(args, new Set(["--run"]));
+  const runId = requiredOption(options, "--run");
+  const { snapshot } = readRun(runId);
+  stdout(`Run ${runId}`);
+  stdout(`Outcome: ${snapshot.outcome ?? "in-progress"}`);
+  stdout("\nActions:");
+  for (const action of snapshot.actions) {
+    const error =
+      action.state === "failed" && action.error ? `：${action.error}` : "";
+    stdout(
+      `  [${stateMarkers[action.state]}] ${action.actionId}  ${action.state}${error}`,
+    );
+  }
+}
+
+function targetSummary(target: Target): string {
+  return [
+    `Target ${target.targetId}`,
+    `  name: ${target.displayName}`,
+    `  platform: ${target.platform}`,
+    `  machineId: ${target.identityEvidence.machineId}`,
+    `  architecture: ${target.identityEvidence.architecture}`,
+    `  remoteUser: ${target.identityEvidence.remoteUser}`,
+    `  hostKey: ${target.identityEvidence.sshHostKeyFingerprint}`,
+    `  targetFingerprint: ${target.targetFingerprint}`,
+  ].join("\n");
+}
+
+async function confirmAuthorizationCommand(
+  command: string,
+  stdout: (message: string) => void,
+): Promise<boolean> {
+  stdout("请在控制机终端执行以下命令，将受限公钥写入目标机：");
+  stdout(command);
+  if (process.env.DAWN_AUTO_CONFIRM === "1") {
+    return true;
+  }
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = await readline.question(
+      "命令成功完成后输入 yes 继续：",
+    );
+    return /^(?:y|yes)$/i.test(answer.trim());
+  } finally {
+    readline.close();
+  }
+}
+
+function defaultTargetManager(
+  stdout: (message: string) => void,
+): TargetManager {
+  return createTargetManager({
+    authorize: (command) => confirmAuthorizationCommand(command, stdout),
+  });
+}
+
+export async function runCli(
+  args: readonly string[],
+  dependencies: CliDependencies = {},
+): Promise<number> {
+  const stdout = dependencies.stdout ?? console.log;
+  const stderr = dependencies.stderr ?? console.error;
+  try {
+    if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+      stdout(usage);
+      return ExitCode.Success;
+    }
+
+    const command =
+      args[0] === "target" || args[0] === "run"
+        ? `${args[0]} ${args[1] ?? ""}`.trim()
+        : args[0];
+    const knownCommands = new Set([
+      "target bootstrap",
+      "target inspect",
+      "target revoke",
+      "plan",
+      "apply",
+      "run show",
+      "resume",
+      "verify",
+    ]);
+    if (!knownCommands.has(command)) {
+      stderr(`未知命令：${command}`);
+      return ExitCode.ParamError;
+    }
+    if (command === "run show") {
+      try {
+        showRun(args.slice(2), stdout);
+        return ExitCode.Success;
+      } catch (error) {
+        if (
+          error instanceof SyntaxError ||
+          (error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT")
+        ) {
+          stderr(
+            `找不到或无法读取 Run：${
+              args[args.indexOf("--run") + 1] ?? ""
+            }`,
+          );
+          return ExitCode.ParamError;
+        }
+        throw error;
+      }
+    }
+
+    if (command.startsWith("target ")) {
+      const targetManager =
+        dependencies.targetManager ?? defaultTargetManager(stdout);
+      if (command === "target bootstrap") {
+        const options = parseOptions(
+          args.slice(2),
+          new Set(["--host", "--user", "--name"]),
+        );
+        const target = await targetManager.bootstrap({
+          host: requiredOption(options, "--host"),
+          user: requiredOption(options, "--user"),
+          name: requiredOption(options, "--name"),
+        });
+        stdout(targetSummary(target));
+        return ExitCode.Success;
+      }
+      const options = parseOptions(args.slice(2), new Set(["--target"]));
+      const targetId = requiredOption(options, "--target");
+      if (command === "target inspect") {
+        stdout(targetSummary(await targetManager.inspect(targetId)));
+      } else {
+        await targetManager.revoke(targetId);
+        stdout(`已撤销 Target ${targetId}：远端公钥和本地记录均已删除。`);
+      }
+      return ExitCode.Success;
+    }
+
+    stderr(`尚未实现：${command}`);
+    return ExitCode.ParamError;
   } catch (error) {
     if (
-      error instanceof SyntaxError ||
-      (error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT")
+      error instanceof Error &&
+      "exitCode" in error &&
+      typeof error.exitCode === "number"
     ) {
-      fail(`找不到或无法读取 Run：${runId}`);
+      stderr(error.message);
+      return error.exitCode;
+    }
+    if (error instanceof Error) {
+      stderr(error.message);
+      return ExitCode.ParamError;
     }
     throw error;
   }
 }
 
-function main(args: readonly string[]): void {
-  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-    console.log(usage);
-    return;
-  }
-
-  const command =
-    args[0] === "target" || args[0] === "run"
-      ? `${args[0]} ${args[1] ?? ""}`.trim()
-      : args[0];
-  const knownCommands = new Set([
-    "target bootstrap",
-    "target inspect",
-    "target revoke",
-    "plan",
-    "apply",
-    "run show",
-    "resume",
-    "verify",
-  ]);
-
-  if (!command || !knownCommands.has(command)) {
-    fail(`未知命令：${command ?? ""}`);
-  }
-  if (command === "run show") {
-    showRun(args.slice(2));
-    return;
-  }
-
-  console.error(`尚未实现：${command}`);
-  process.exit(ExitCode.ParamError);
+const entryPath = process.argv[1]
+  ? pathToFileURL(resolveEntryPath(process.argv[1])).href
+  : undefined;
+if (entryPath === import.meta.url) {
+  runCli(process.argv.slice(2))
+    .then((exitCode) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error: unknown) => {
+      console.error(error);
+      process.exitCode = 1;
+    });
 }
 
-try {
-  main(process.argv.slice(2));
-} catch (error) {
-  if (
-    error instanceof Error &&
-    "exitCode" in error &&
-    typeof error.exitCode === "number"
-  ) {
-    console.error(error.message);
-    process.exit(error.exitCode);
-  }
-  throw error;
+function resolveEntryPath(path: string): string {
+  return resolve(path);
 }

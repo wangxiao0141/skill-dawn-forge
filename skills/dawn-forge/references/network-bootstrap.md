@@ -2,7 +2,7 @@
 
 唯一匹配候选把 Clash Verge Rev 声明为 `required: true`、`official-download` 且目标机尚未安装时，阶段 2 始终生成同一份 canonical mini-plan。目标机直连探测只决定后续是否必须先启用代理以及记录哪条实际 route，不再决定是否跳过 required Clash。只有 Clash 已安装或 `required: false` 时才不生成 artifact 请求。
 
-SSH `finalizeCommand` 成功后，只运行受控入口：
+`dawn target bootstrap` 成功并写入 Target 后，只运行受控入口：
 
 ```text
 node <skill-directory>/scripts/plan-installation.mjs network-bootstrap --profile <profile.json> --identity-receipt <identity.json> --controller-route <direct|clash> --target-route direct --output-dir <new-network-bundle-directory>

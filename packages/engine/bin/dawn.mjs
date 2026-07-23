@@ -36,7 +36,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 // node_modules/graceful-fs/polyfills.js
 var require_polyfills = __commonJS({
   "node_modules/graceful-fs/polyfills.js"(exports, module) {
-    var constants2 = __require("constants");
+    var constants3 = __require("constants");
     var origCwd = process.cwd;
     var cwd = null;
     var platform = process.env.GRACEFUL_FS_PLATFORM || process.platform;
@@ -60,7 +60,7 @@ var require_polyfills = __commonJS({
     var chdir;
     module.exports = patch;
     function patch(fs) {
-      if (constants2.hasOwnProperty("O_SYMLINK") && process.version.match(/^v0\.6\.[0-2]|^v0\.5\./)) {
+      if (constants3.hasOwnProperty("O_SYMLINK") && process.version.match(/^v0\.6\.[0-2]|^v0\.5\./)) {
         patchLchmod(fs);
       }
       if (!fs.lutimes) {
@@ -162,7 +162,7 @@ var require_polyfills = __commonJS({
         fs2.lchmod = function(path, mode, callback) {
           fs2.open(
             path,
-            constants2.O_WRONLY | constants2.O_SYMLINK,
+            constants3.O_WRONLY | constants3.O_SYMLINK,
             mode,
             function(err, fd) {
               if (err) {
@@ -178,7 +178,7 @@ var require_polyfills = __commonJS({
           );
         };
         fs2.lchmodSync = function(path, mode) {
-          var fd = fs2.openSync(path, constants2.O_WRONLY | constants2.O_SYMLINK, mode);
+          var fd = fs2.openSync(path, constants3.O_WRONLY | constants3.O_SYMLINK, mode);
           var threw = true;
           var ret;
           try {
@@ -198,9 +198,9 @@ var require_polyfills = __commonJS({
         };
       }
       function patchLutimes(fs2) {
-        if (constants2.hasOwnProperty("O_SYMLINK") && fs2.futimes) {
+        if (constants3.hasOwnProperty("O_SYMLINK") && fs2.futimes) {
           fs2.lutimes = function(path, at, mt, cb) {
-            fs2.open(path, constants2.O_SYMLINK, function(er, fd) {
+            fs2.open(path, constants3.O_SYMLINK, function(er, fd) {
               if (er) {
                 if (cb) cb(er);
                 return;
@@ -213,7 +213,7 @@ var require_polyfills = __commonJS({
             });
           };
           fs2.lutimesSync = function(path, at, mt) {
-            var fd = fs2.openSync(path, constants2.O_SYMLINK);
+            var fd = fs2.openSync(path, constants3.O_SYMLINK);
             var ret;
             var threw = true;
             try {
@@ -494,14 +494,14 @@ var require_graceful_fs = __commonJS({
         return close;
       }(fs.close);
       fs.closeSync = function(fs$closeSync) {
-        function closeSync2(fd) {
+        function closeSync3(fd) {
           fs$closeSync.apply(fs, arguments);
           resetQueue();
         }
-        Object.defineProperty(closeSync2, previousSymbol, {
+        Object.defineProperty(closeSync3, previousSymbol, {
           value: fs$closeSync
         });
-        return closeSync2;
+        return closeSync3;
       }(fs.closeSync);
       if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || "")) {
         process.on("exit", function() {
@@ -1532,12 +1532,12 @@ var require_adapter = __commonJS({
       return newFs;
     }
     function toPromise(method) {
-      return (...args) => new Promise((resolve, reject) => {
+      return (...args) => new Promise((resolve3, reject) => {
         args.push((err, result) => {
           if (err) {
             reject(err);
           } else {
-            resolve(result);
+            resolve3(result);
           }
         });
         method(...args);
@@ -1610,6 +1610,11 @@ var require_proper_lockfile = __commonJS({
   }
 });
 
+// src/cli/index.ts
+import { pathToFileURL } from "node:url";
+import { createInterface } from "node:readline/promises";
+import { resolve as resolve2 } from "node:path";
+
 // src/journal/index.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
 import {
@@ -1624,9 +1629,64 @@ import {
   writeFileSync,
   fsyncSync
 } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+// src/protocol/hash.ts
+import { createHash } from "node:crypto";
+function assertValidUnicode(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 55296 && codeUnit <= 56319) {
+      const nextCodeUnit = value.charCodeAt(index + 1);
+      if (index + 1 >= value.length || nextCodeUnit < 56320 || nextCodeUnit > 57343) {
+        throw new TypeError("JCS \u8F93\u5165\u5305\u542B\u672A\u914D\u5BF9\u7684 Unicode surrogate\u3002");
+      }
+      index += 1;
+    } else if (codeUnit >= 56320 && codeUnit <= 57343) {
+      throw new TypeError("JCS \u8F93\u5165\u5305\u542B\u672A\u914D\u5BF9\u7684 Unicode surrogate\u3002");
+    }
+  }
+}
+function serializeString(value) {
+  assertValidUnicode(value);
+  return JSON.stringify(value);
+}
+function canonicalize(value) {
+  if (value === null || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") {
+    return serializeString(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError("JCS \u8F93\u5165\u5305\u542B\u975E\u6709\u9650\u6570\u503C\u3002");
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalize).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("JCS \u8F93\u5165\u53EA\u80FD\u5305\u542B\u666E\u901A JSON \u5BF9\u8C61\u3002");
+    }
+    const object = value;
+    const properties = Object.keys(object).sort().map((key) => `${serializeString(key)}:${canonicalize(object[key])}`);
+    return `{${properties.join(",")}}`;
+  }
+  throw new TypeError(`JCS \u8F93\u5165\u5305\u542B\u4E0D\u652F\u6301\u7684\u7C7B\u578B\uFF1A${typeof value}\u3002`);
+}
+function sha256Jcs(value) {
+  const canonicalJson = canonicalize(value);
+  return createHash("sha256").update(canonicalJson, "utf8").digest("hex");
+}
+function computeTargetFingerprint(evidence) {
+  return sha256Jcs(evidence);
+}
 
 // src/protocol/index.ts
 var ExitCode = {
@@ -1695,7 +1755,7 @@ function visibleJournalBytes(journal, pendingCommitPath) {
     return journal.subarray(0, pendingCommit.startOffset);
   }
   const committedBytes = journal.subarray(pendingCommit.startOffset);
-  const actualHash = createHash("sha256").update(committedBytes).digest("hex");
+  const actualHash = createHash2("sha256").update(committedBytes).digest("hex");
   if (actualHash !== pendingCommit.sha256) {
     throw new JournalConsistencyError(
       "commit.pending \u8BB0\u5F55\u7684 Journal \u5185\u5BB9 hash \u4E0D\u5339\u914D\u3002"
@@ -1987,13 +2047,1057 @@ function readRun(runId, options) {
   throw lastConsistencyError ?? new JournalConsistencyError("\u65E0\u6CD5\u8BFB\u53D6\u7A33\u5B9A\u7684 Journal \u4E0E snapshot \u89C6\u56FE\u3002");
 }
 
+// src/target/index.ts
+var import_proper_lockfile2 = __toESM(require_proper_lockfile(), 1);
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  closeSync as closeSync2,
+  constants as constants2,
+  existsSync,
+  fsyncSync as fsyncSync2,
+  lstatSync,
+  mkdirSync as mkdirSync2,
+  openSync as openSync2,
+  readFileSync as readFileSync2,
+  readdirSync,
+  renameSync as renameSync2,
+  rmSync,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { homedir as homedir2, hostname } from "node:os";
+import { isIP } from "node:net";
+import { dirname, join as join2, resolve } from "node:path";
+var IdentityConflictError = class extends Error {
+  exitCode = ExitCode.IdentityConflict;
+  constructor(fields) {
+    super(`\u76EE\u6807\u8EAB\u4EFD\u51B2\u7A81\uFF1A${fields.join(", ")} \u5DF2\u53D8\u5316\u3002`);
+    this.name = "IdentityConflictError";
+  }
+};
+var TargetInputError = class extends Error {
+  exitCode = ExitCode.ParamError;
+  constructor(message) {
+    super(message);
+    this.name = "TargetInputError";
+  }
+};
+var TargetNeedsUserError = class extends Error {
+  exitCode = ExitCode.NeedsUser;
+  constructor() {
+    super("\u5C1A\u672A\u786E\u8BA4 authorized_keys \u5DF2\u5B89\u88C5\u3002");
+    this.name = "TargetNeedsUserError";
+  }
+};
+var TargetRollbackError = class extends Error {
+  exitCode = ExitCode.ActionFailed;
+  constructor(originalError, rollbackError, recoveryDirectory) {
+    const original = originalError instanceof Error ? originalError.message : String(originalError);
+    const rollback = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+    super(
+      `Target bootstrap \u5931\u8D25\u4E14\u8FDC\u7AEF\u516C\u94A5\u56DE\u6EDA\u5931\u8D25\uFF1A${original}\uFF1B\u56DE\u6EDA\u9519\u8BEF\uFF1A${rollback}\u3002\u6062\u590D\u8BC1\u636E\u4FDD\u7559\u5728 ${recoveryDirectory}`
+    );
+    this.name = "TargetRollbackError";
+  }
+};
+var TargetLockError = class extends Error {
+  exitCode = ExitCode.LockConflict;
+  constructor(targetId) {
+    super(`Target lifecycle \u5DF2\u88AB\u5176\u4ED6\u8FDB\u7A0B\u9501\u5B9A\uFF1A${targetId}`);
+    this.name = "TargetLockError";
+  }
+};
+function assertSafeValue(value, label) {
+  const normalized = value.trim();
+  if (!normalized || /[\u0000-\u001f\u007f]/.test(normalized) || /\s/.test(normalized)) {
+    throw new TargetInputError(`${label} \u65E0\u6548\u3002`);
+  }
+  return normalized;
+}
+function isTrustedLanHost(host) {
+  const normalized = host.toLowerCase();
+  if (normalized.endsWith(".local") || normalized.endsWith(".home.arpa")) {
+    return true;
+  }
+  if (isIP(normalized) === 4) {
+    const [first, second] = normalized.split(".").map((part) => Number.parseInt(part, 10));
+    return first === 10 || first === 172 && second >= 16 && second <= 31 || first === 192 && second === 168 || first === 169 && second === 254;
+  }
+  const unbracketed = normalized.replace(/^\[|\]$/g, "");
+  const [address, zone] = unbracketed.split("%", 2);
+  if (isIP(address) !== 6) {
+    return false;
+  }
+  return address.startsWith("fc") || address.startsWith("fd") || /^fe[89ab]/.test(address) && Boolean(zone);
+}
+function targetIdFromName(name) {
+  const targetId = name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(targetId)) {
+    throw new TargetInputError("--name \u65E0\u6CD5\u8F6C\u6362\u4E3A\u6709\u6548 targetId\u3002");
+  }
+  return targetId;
+}
+function validateTargetId(targetId) {
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(targetId)) {
+    throw new TargetInputError(`targetId \u65E0\u6548\uFF1A${targetId}`);
+  }
+}
+function quoteSshConfig(value) {
+  return `"${value.replaceAll("\\", "/").replaceAll('"', '\\"')}"`;
+}
+function renderSshConfig(connection) {
+  return [
+    `Host ${connection.alias}`,
+    `  HostName ${connection.host}`,
+    `  User ${connection.user}`,
+    `  IdentityFile ${quoteSshConfig(connection.identityFile)}`,
+    "  IdentitiesOnly yes",
+    "  ClearAllForwardings yes",
+    "  ForwardAgent no",
+    "  ForwardX11 no",
+    "  PermitLocalCommand no",
+    "  ControlMaster no",
+    "  ControlPath none",
+    "  ControlPersist no",
+    "  CanonicalizeHostname no",
+    "  ForkAfterAuthentication no",
+    "  StdinNull no",
+    "  RequestTTY no",
+    "  Tunnel no",
+    "  RemoteCommand none",
+    "  ProxyCommand none",
+    "  ProxyJump none",
+    "  KnownHostsCommand none",
+    "  IdentityAgent none",
+    "  AddKeysToAgent no",
+    "  UpdateHostKeys no",
+    "  BatchMode yes",
+    "  PasswordAuthentication no",
+    "  KbdInteractiveAuthentication no",
+    "  PreferredAuthentications publickey",
+    "  PubkeyAuthentication yes",
+    "  HostbasedAuthentication no",
+    "  GSSAPIAuthentication no",
+    "  StrictHostKeyChecking yes",
+    "  ConnectTimeout 8",
+    "  ConnectionAttempts 1",
+    `  UserKnownHostsFile ${quoteSshConfig(connection.knownHostsPath)}`,
+    "  GlobalKnownHostsFile none",
+    ""
+  ].join("\n");
+}
+function buildAuthorizedKeyLine(publicKeyLine, controllerName = hostname()) {
+  const normalized = publicKeyLine.trim();
+  const publicKeyBlob = normalized.match(
+    /^ssh-ed25519 ([A-Za-z0-9+/=]+)(?: .*)?$/
+  )?.[1];
+  if (!publicKeyBlob) {
+    throw new TargetInputError("\u63A7\u5236\u673A\u516C\u94A5\u4E0D\u662F\u5408\u6CD5\u7684 ED25519 public key\u3002");
+  }
+  const comment = assertSafeValue(controllerName, "\u63A7\u5236\u673A hostname");
+  return `no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-pty ssh-ed25519 ${publicKeyBlob} ${comment}`;
+}
+function writeFileAtomic(path, content, mode = 384) {
+  assertRegularDirectory(dirname(path), "\u539F\u5B50\u5199\u5165\u76EE\u5F55");
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  const descriptor = openSync2(
+    temporaryPath,
+    constants2.O_CREAT | constants2.O_EXCL | constants2.O_WRONLY,
+    mode
+  );
+  try {
+    writeFileSync2(descriptor, content);
+    fsyncSync2(descriptor);
+  } finally {
+    closeSync2(descriptor);
+  }
+  renameSync2(temporaryPath, path);
+}
+function assertRegularFile(path, label) {
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new TargetInputError(`${label} \u4E0D\u5B58\u5728\u3002`);
+    }
+    throw error;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new TargetInputError(`${label} \u5FC5\u987B\u662F regular file\uFF0C\u4E0D\u80FD\u662F symlink\u3002`);
+  }
+}
+function assertRegularDirectory(path, label) {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new TargetInputError(`${label} \u5FC5\u987B\u662F directory\uFF0C\u4E0D\u80FD\u662F symlink\u3002`);
+  }
+}
+function identityDifferences(expected, actual) {
+  return [
+    "sshHostKeyFingerprint",
+    "machineId",
+    "architecture",
+    "remoteUser"
+  ].filter((field) => expected[field] !== actual[field]);
+}
+function validateProbe(probe, expectedPlatform, expectedUser) {
+  if (probe.platform !== expectedPlatform) {
+    throw new IdentityConflictError(["platform"]);
+  }
+  for (const [field, value] of Object.entries(probe.identityEvidence)) {
+    if (typeof value !== "string" || !value.trim() || /[\u0000-\u001f\u007f]/.test(value)) {
+      throw new TargetInputError(`identityEvidence.${field} \u65E0\u6548\u3002`);
+    }
+  }
+  if (probe.identityEvidence.remoteUser.toLowerCase() !== expectedUser.toLowerCase()) {
+    throw new IdentityConflictError(["remoteUser"]);
+  }
+}
+function storedTargetConnection(target, targetDirectory) {
+  return {
+    targetId: target.targetId,
+    alias: target.locators.sshAlias,
+    host: assertSafeValue(target.connection.host, "\u5B58\u50A8\u7684 host"),
+    user: assertSafeValue(target.connection.user, "\u5B58\u50A8\u7684 user"),
+    platform: target.platform,
+    configPath: join2(targetDirectory, "ssh_config"),
+    knownHostsPath: join2(targetDirectory, "known_hosts"),
+    identityFile: target.connection.identityFile
+  };
+}
+function parseStoredTarget(content, expectedTargetId) {
+  let value;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    throw new TargetInputError("target.json \u4E0D\u662F\u5408\u6CD5 JSON\u3002");
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TargetInputError("target.json \u7ED3\u6784\u65E0\u6548\u3002");
+  }
+  const target = value;
+  if (target.targetId !== expectedTargetId || typeof target.displayName !== "string" || target.platform !== "macos" || target.locators?.sshAlias !== `dawn-${expectedTargetId}` || typeof target.identityEvidence?.sshHostKeyFingerprint !== "string" || typeof target.identityEvidence.machineId !== "string" || typeof target.identityEvidence.architecture !== "string" || typeof target.identityEvidence.remoteUser !== "string" || typeof target.targetFingerprint !== "string" || !/^[0-9a-f]{64}$/.test(target.targetFingerprint) || typeof target.registeredAt !== "string" || typeof target.connection?.host !== "string" || typeof target.connection.user !== "string" || typeof target.connection.identityFile !== "string" || typeof target.controllerPublicKeyBlob !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(target.controllerPublicKeyBlob)) {
+    throw new TargetInputError("target.json \u7ED3\u6784\u65E0\u6548\u3002");
+  }
+  if (computeTargetFingerprint(target.identityEvidence) !== target.targetFingerprint) {
+    throw new TargetInputError("target.json \u7684 targetFingerprint \u4E0D\u4E00\u81F4\u3002");
+  }
+  return target;
+}
+var TargetManager = class {
+  #options;
+  #stateDirectory;
+  #targetsDirectory;
+  constructor(options) {
+    this.#options = options;
+    this.#stateDirectory = join2(options.homeDirectory, ".dawn-forge");
+    this.#targetsDirectory = join2(this.#stateDirectory, "targets");
+  }
+  async bootstrap(input) {
+    const host = assertSafeValue(input.host, "--host");
+    const user = assertSafeValue(input.user, "--user");
+    if (host.length > 253 || !/^[A-Za-z0-9._:%[\]-]+$/.test(host) || !isTrustedLanHost(host)) {
+      throw new TargetInputError("--host \u5FC5\u987B\u662F\u53D7\u4FE1\u4EFB\u7684\u5C40\u57DF\u7F51\u5730\u5740\u3002");
+    }
+    if (user.length > 128 || !/^[A-Za-z0-9._@\\-]+$/.test(user)) {
+      throw new TargetInputError("--user \u65E0\u6548\u3002");
+    }
+    const displayName = input.name.trim();
+    if (!displayName || /[\u0000-\u001f\u007f]/.test(displayName)) {
+      throw new TargetInputError("--name \u65E0\u6548\u3002");
+    }
+    const platform = "macos";
+    const targetId = targetIdFromName(displayName);
+    const alias = `dawn-${targetId}`;
+    this.#ensureStateDirectories();
+    const releaseLock = this.#acquireTargetLock(targetId);
+    try {
+      const finalDirectory = join2(this.#targetsDirectory, targetId);
+      const stagingDirectory = join2(
+        this.#targetsDirectory,
+        `.${targetId}.bootstrap-${randomUUID()}`
+      );
+      if (existsSync(join2(finalDirectory, "target.json"))) {
+        const existing = this.#readTarget(targetId);
+        const inputDifferences = [
+          ...existing.connection.host !== host ? ["host"] : [],
+          ...existing.connection.user.toLowerCase() !== user.toLowerCase() ? ["remoteUser"] : []
+        ];
+        if (inputDifferences.length > 0) {
+          throw new IdentityConflictError(inputDifferences);
+        }
+        await this.#verifyCurrentIdentity(existing, finalDirectory);
+        const completedBootstrapPath = join2(
+          finalDirectory,
+          "bootstrap.json"
+        );
+        if (existsSync(completedBootstrapPath)) {
+          assertRegularFile(
+            completedBootstrapPath,
+            "\u5DF2\u5B8C\u6210\u7684 bootstrap pending state"
+          );
+          rmSync(completedBootstrapPath, { force: false });
+        }
+        return existing;
+      }
+      this.#assertNoPendingBootstrap();
+      this.#assertUniqueLocator(host, targetId);
+      const key = await this.#options.keyProvider.ensure();
+      mkdirSync2(stagingDirectory, { mode: 448 });
+      let authorized = false;
+      let published = false;
+      let preserveStaging = false;
+      let stagingConnection;
+      let authorizedKeyLine;
+      try {
+        stagingConnection = {
+          targetId,
+          alias,
+          host,
+          user,
+          platform,
+          configPath: join2(stagingDirectory, "ssh_config"),
+          knownHostsPath: join2(stagingDirectory, "known_hosts"),
+          identityFile: key.privateKeyPath
+        };
+        writeFileAtomic(
+          stagingConnection.configPath,
+          renderSshConfig(stagingConnection)
+        );
+        authorizedKeyLine = buildAuthorizedKeyLine(
+          key.publicKeyLine,
+          `${hostname()}-dawn-${randomUUID()}`
+        );
+        writeFileAtomic(
+          join2(stagingDirectory, "bootstrap.json"),
+          `${JSON.stringify(
+            {
+              schemaVersion: 1,
+              targetId,
+              host,
+              user,
+              controllerPublicKeyBlob: key.publicKeyBlob,
+              authorizedKeyLine,
+              startedAt: this.#options.now().toISOString()
+            },
+            null,
+            2
+          )}
+`
+        );
+        const command = this.#options.ssh.authorizationCommand(
+          stagingConnection,
+          authorizedKeyLine
+        );
+        if (!await this.#options.authorize(command)) {
+          throw new TargetNeedsUserError();
+        }
+        authorized = true;
+        await this.#options.ssh.verifyAuthorization(
+          stagingConnection,
+          authorizedKeyLine
+        );
+        const probe = await this.#options.ssh.probe(stagingConnection);
+        validateProbe(probe, platform, user);
+        this.#assertUniqueIdentity(probe.identityEvidence, targetId);
+        assertRegularFile(
+          stagingConnection.knownHostsPath,
+          "\u53D7\u63A7 known_hosts"
+        );
+        const targetFingerprint = computeTargetFingerprint(
+          probe.identityEvidence
+        );
+        const finalConnection = {
+          ...stagingConnection,
+          platform,
+          configPath: join2(finalDirectory, "ssh_config"),
+          knownHostsPath: join2(finalDirectory, "known_hosts")
+        };
+        const target = {
+          targetId,
+          displayName,
+          platform,
+          locators: { sshAlias: alias },
+          identityEvidence: probe.identityEvidence,
+          targetFingerprint,
+          registeredAt: this.#options.now().toISOString(),
+          connection: {
+            host,
+            user,
+            identityFile: key.privateKeyPath
+          },
+          controllerPublicKeyBlob: key.publicKeyBlob
+        };
+        writeFileAtomic(
+          stagingConnection.configPath,
+          renderSshConfig(finalConnection)
+        );
+        writeFileAtomic(
+          join2(stagingDirectory, "target.json"),
+          `${JSON.stringify(target, null, 2)}
+`
+        );
+        renameSync2(stagingDirectory, finalDirectory);
+        published = true;
+        rmSync(join2(finalDirectory, "bootstrap.json"), { force: false });
+        return target;
+      } catch (error) {
+        if (authorized && !published && stagingConnection && authorizedKeyLine) {
+          try {
+            writeFileAtomic(
+              stagingConnection.configPath,
+              renderSshConfig(stagingConnection)
+            );
+            await this.#options.ssh.rollbackAuthorization(
+              stagingConnection,
+              authorizedKeyLine
+            );
+          } catch (rollbackError) {
+            preserveStaging = true;
+            throw new TargetRollbackError(
+              error,
+              rollbackError,
+              stagingDirectory
+            );
+          }
+        }
+        throw error;
+      } finally {
+        if (!preserveStaging && existsSync(stagingDirectory)) {
+          rmSync(stagingDirectory, { recursive: true, force: true });
+        }
+      }
+    } finally {
+      releaseLock();
+    }
+  }
+  async inspect(targetId) {
+    validateTargetId(targetId);
+    this.#assertTargetStateAvailable(targetId);
+    const releaseLock = this.#acquireTargetLock(targetId);
+    try {
+      const target = this.#readTarget(targetId);
+      const targetDirectory = join2(this.#targetsDirectory, targetId);
+      await this.#verifyCurrentIdentity(target, targetDirectory);
+      return target;
+    } finally {
+      releaseLock();
+    }
+  }
+  async revoke(targetId) {
+    validateTargetId(targetId);
+    this.#assertTargetStateAvailable(targetId);
+    const releaseLock = this.#acquireTargetLock(targetId);
+    try {
+      const targetDirectory = join2(this.#targetsDirectory, targetId);
+      const target = this.#readTarget(targetId);
+      const revokePath = join2(targetDirectory, "revoke.json");
+      if (existsSync(revokePath)) {
+        assertRegularFile(revokePath, "revoke pending state");
+        throw new TargetInputError(
+          `Target ${targetId} \u5B58\u5728\u672A\u5B8C\u6210\u7684 revoke\uFF1B\u5DF2\u4FDD\u7559\u6062\u590D\u8BC1\u636E\uFF0C\u4E0D\u80FD\u81EA\u52A8\u91CD\u8BD5\u6216\u5220\u9664\u3002`
+        );
+      }
+      await this.#verifyCurrentIdentity(target, targetDirectory);
+      writeFileAtomic(
+        revokePath,
+        `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            targetId,
+            startedAt: this.#options.now().toISOString()
+          },
+          null,
+          2
+        )}
+`
+      );
+      await this.#options.ssh.revoke(
+        storedTargetConnection(target, targetDirectory),
+        target.controllerPublicKeyBlob
+      );
+      rmSync(targetDirectory, { recursive: true, force: false });
+    } finally {
+      releaseLock();
+    }
+  }
+  #readTarget(targetId) {
+    const targetDirectory = join2(this.#targetsDirectory, targetId);
+    const targetPath = join2(targetDirectory, "target.json");
+    try {
+      this.#assertExistingStateDirectories();
+      assertRegularDirectory(targetDirectory, "Target \u76EE\u5F55");
+      assertRegularFile(targetPath, "target.json");
+      return parseStoredTarget(readFileSync2(targetPath, "utf8"), targetId);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        throw new TargetInputError(`\u627E\u4E0D\u5230 Target\uFF1A${targetId}`);
+      }
+      throw error;
+    }
+  }
+  async #verifyCurrentIdentity(target, targetDirectory) {
+    const key = await this.#options.keyProvider.load();
+    if (key.publicKeyBlob !== target.controllerPublicKeyBlob) {
+      throw new IdentityConflictError(["controllerPublicKey"]);
+    }
+    if (key.privateKeyPath !== target.connection.identityFile) {
+      throw new IdentityConflictError(["controllerIdentityFile"]);
+    }
+    const connection = storedTargetConnection(target, targetDirectory);
+    assertRegularFile(connection.configPath, "Target SSH config");
+    assertRegularFile(connection.knownHostsPath, "\u53D7\u63A7 known_hosts");
+    if (readFileSync2(connection.configPath, "utf8") !== renderSshConfig(connection)) {
+      throw new TargetInputError("Target SSH config \u5DF2\u6F02\u79FB\u3002");
+    }
+    const probe = await this.#options.ssh.probe(connection);
+    validateProbe(probe, target.platform, target.connection.user);
+    const differences = identityDifferences(
+      target.identityEvidence,
+      probe.identityEvidence
+    );
+    if (differences.length > 0 || computeTargetFingerprint(probe.identityEvidence) !== target.targetFingerprint) {
+      throw new IdentityConflictError(
+        differences.length > 0 ? differences : ["targetFingerprint"]
+      );
+    }
+  }
+  #ensureStateDirectories() {
+    assertRegularDirectory(this.#options.homeDirectory, "\u63A7\u5236\u673A home \u76EE\u5F55");
+    if (!existsSync(this.#stateDirectory)) {
+      mkdirSync2(this.#stateDirectory, { mode: 448 });
+    }
+    assertRegularDirectory(this.#stateDirectory, "Dawn Forge \u72B6\u6001\u76EE\u5F55");
+    if (!existsSync(this.#targetsDirectory)) {
+      mkdirSync2(this.#targetsDirectory, { mode: 448 });
+    }
+    assertRegularDirectory(this.#targetsDirectory, "Target \u6839\u76EE\u5F55");
+  }
+  #assertExistingStateDirectories() {
+    assertRegularDirectory(this.#options.homeDirectory, "\u63A7\u5236\u673A home \u76EE\u5F55");
+    assertRegularDirectory(this.#stateDirectory, "Dawn Forge \u72B6\u6001\u76EE\u5F55");
+    assertRegularDirectory(this.#targetsDirectory, "Target \u6839\u76EE\u5F55");
+  }
+  #assertTargetStateAvailable(targetId) {
+    try {
+      this.#assertExistingStateDirectories();
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        throw new TargetInputError(`\u627E\u4E0D\u5230 Target\uFF1A${targetId}`);
+      }
+      throw error;
+    }
+  }
+  #acquireTargetLock(targetId) {
+    try {
+      return import_proper_lockfile2.default.lockSync(this.#targetsDirectory, {
+        lockfilePath: join2(this.#targetsDirectory, ".registry.lock"),
+        realpath: false,
+        retries: 0,
+        // 同步 SSH 最坏连续阻塞约 55 秒；stale 必须留出显著余量。
+        stale: 12e4,
+        update: 1e4
+      });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
+        throw new TargetLockError(targetId);
+      }
+      throw error;
+    }
+  }
+  #storedTargets(excludingTargetId) {
+    const targets = [];
+    for (const entry of readdirSync(this.#targetsDirectory, {
+      withFileTypes: true
+    })) {
+      if (entry.name.startsWith(".") || entry.name === excludingTargetId) {
+        continue;
+      }
+      validateTargetId(entry.name);
+      if (!entry.isDirectory()) {
+        throw new TargetInputError(
+          `Target \u6839\u76EE\u5F55\u5305\u542B\u975E directory \u6761\u76EE\uFF1A${entry.name}`
+        );
+      }
+      targets.push(this.#readTarget(entry.name));
+    }
+    return targets;
+  }
+  #assertNoPendingBootstrap() {
+    for (const entry of readdirSync(this.#targetsDirectory, {
+      withFileTypes: true
+    })) {
+      if (!entry.name.startsWith(".") || !entry.name.includes(".bootstrap-") || !entry.isDirectory()) {
+        continue;
+      }
+      const pendingPath = join2(
+        this.#targetsDirectory,
+        entry.name,
+        "bootstrap.json"
+      );
+      if (existsSync(pendingPath)) {
+        assertRegularFile(pendingPath, "bootstrap pending state");
+        throw new TargetInputError(
+          `\u53D1\u73B0\u672A\u5B8C\u6210\u7684 Target bootstrap\uFF1A${pendingPath}\u3002\u5DF2\u4FDD\u7559\u6062\u590D\u8BC1\u636E\uFF0C\u4E0D\u80FD\u901A\u8FC7\u65B0 name \u7ED5\u8FC7\u3002`
+        );
+      }
+    }
+  }
+  #assertUniqueLocator(host, targetId) {
+    const duplicate = this.#storedTargets(targetId).find(
+      (target) => target.connection.host.toLowerCase() === host.toLowerCase()
+    );
+    if (duplicate) {
+      throw new IdentityConflictError([
+        `host \u5DF2\u7531 ${duplicate.targetId} \u6CE8\u518C`
+      ]);
+    }
+  }
+  #assertUniqueIdentity(identity, targetId) {
+    const duplicate = this.#storedTargets(targetId).find(
+      (target) => target.identityEvidence.machineId === identity.machineId || target.identityEvidence.sshHostKeyFingerprint === identity.sshHostKeyFingerprint
+    );
+    if (duplicate) {
+      throw new IdentityConflictError([
+        `\u673A\u5668\u8EAB\u4EFD\u5DF2\u7531 ${duplicate.targetId} \u6CE8\u518C`
+      ]);
+    }
+  }
+};
+function defaultProcessRunner(command, args, timeout) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    timeout,
+    windowsHide: true
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    error: result.error
+  };
+}
+var NodeControllerKeyProvider = class {
+  #homeDirectory;
+  #sshKeygen;
+  #run;
+  constructor(homeDirectory, sshKeygen = "ssh-keygen", run = defaultProcessRunner) {
+    this.#homeDirectory = homeDirectory;
+    this.#sshKeygen = sshKeygen;
+    this.#run = run;
+  }
+  async load() {
+    return this.#read(false);
+  }
+  async ensure() {
+    return this.#read(true);
+  }
+  #read(createIfMissing) {
+    assertRegularDirectory(this.#homeDirectory, "\u63A7\u5236\u673A home \u76EE\u5F55");
+    const privateKeyPath = resolve(
+      this.#homeDirectory,
+      ".ssh",
+      "id_ed25519"
+    );
+    const publicKeyPath = `${privateKeyPath}.pub`;
+    const sshDirectory = dirname(privateKeyPath);
+    if (!existsSync(sshDirectory)) {
+      if (!createIfMissing) {
+        throw new TargetInputError(
+          "SSH key pair \u4E0D\u5B58\u5728\uFF1B\u5DF2\u6709 Target \u4E0D\u5141\u8BB8\u81EA\u52A8\u6362 key\u3002"
+        );
+      }
+      mkdirSync2(sshDirectory, { mode: 448 });
+    }
+    assertRegularDirectory(sshDirectory, "\u63A7\u5236\u673A .ssh \u76EE\u5F55");
+    const privateExists = existsSync(privateKeyPath);
+    const publicExists = existsSync(publicKeyPath);
+    if (privateExists !== publicExists) {
+      throw new TargetInputError(
+        "SSH key pair \u4E0D\u5B8C\u6574\uFF1B\u4E3A\u907F\u514D\u8986\u76D6\uFF0C\u5DF2\u505C\u6B62 bootstrap\u3002"
+      );
+    }
+    if (!privateExists && !createIfMissing) {
+      throw new TargetInputError(
+        "SSH key pair \u4E0D\u5B58\u5728\uFF1B\u5DF2\u6709 Target \u4E0D\u5141\u8BB8\u81EA\u52A8\u6362 key\u3002"
+      );
+    }
+    if (!privateExists) {
+      const result = this.#run(
+        this.#sshKeygen,
+        [
+          "-t",
+          "ed25519",
+          "-f",
+          privateKeyPath,
+          "-N",
+          "",
+          "-C",
+          `dawn-forge@${hostname()}`
+        ],
+        1e4
+      );
+      if (result.error || result.status !== 0) {
+        throw new TargetInputError(
+          result.stderr.trim() || result.error?.message || "\u65E0\u6CD5\u521B\u5EFA SSH key\u3002"
+        );
+      }
+    }
+    assertRegularFile(privateKeyPath, "SSH private key");
+    assertRegularFile(publicKeyPath, "SSH public key");
+    if (process.platform !== "win32") {
+      chmodSync(privateKeyPath, 384);
+      chmodSync(publicKeyPath, 420);
+    }
+    const publicKeyLine = readFileSync2(publicKeyPath, "utf8").trim();
+    const match = publicKeyLine.match(
+      /^ssh-ed25519 ([A-Za-z0-9+/=]+)(?: .*)?$/
+    );
+    if (!match) {
+      throw new TargetInputError("\u9ED8\u8BA4 SSH public key \u4E0D\u662F ED25519\u3002");
+    }
+    const derived = this.#run(
+      this.#sshKeygen,
+      ["-y", "-P", "", "-f", privateKeyPath],
+      1e4
+    );
+    const derivedBlob = derived.stdout.trim().match(/^ssh-ed25519 ([A-Za-z0-9+/=]+)(?: .*)?$/)?.[1];
+    if (derived.error || derived.status !== 0 || !derivedBlob || derivedBlob !== match[1]) {
+      throw new TargetInputError(
+        "SSH private key \u65E0\u6548\u3001\u9700\u8981 passphrase\uFF0C\u6216\u4E0E public key \u4E0D\u5339\u914D\u3002"
+      );
+    }
+    return {
+      privateKeyPath,
+      publicKeyPath,
+      publicKeyLine,
+      publicKeyBlob: match[1]
+    };
+  }
+};
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+function powershellQuote(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+function windowsControllerCommand(executable, args) {
+  const script = [
+    `$dawnArguments=@(${args.map(powershellQuote).join(",")})`,
+    `& ${powershellQuote(executable)} @dawnArguments`,
+    "exit $LASTEXITCODE"
+  ].join("; ");
+  return `powershell.exe -NoProfile -EncodedCommand ${Buffer.from(
+    script,
+    "utf16le"
+  ).toString("base64")}`;
+}
+function macosAuthorizeScript(authorizedKeyLine, publicKeyBlob) {
+  const encodedLine = Buffer.from(authorizedKeyLine).toString("base64");
+  return [
+    "set -e",
+    `KEY="$(printf %s '${encodedLine}' | base64 -D)"`,
+    `BLOB='${publicKeyBlob}'`,
+    "umask 077",
+    'mkdir -p "$HOME/.ssh"',
+    'AUTH="$HOME/.ssh/authorized_keys"',
+    'TMP="$AUTH.dawn-forge.$$"',
+    `trap 'rm -f "$TMP"' EXIT`,
+    'touch "$AUTH"',
+    'chmod 700 "$HOME/.ssh"',
+    'chmod 600 "$AUTH"',
+    `if awk -v blob="$BLOB" '{ for (i=1; i<=NF; i++) if ($i == blob) found=1 } END { exit found ? 0 : 1 }' "$AUTH"; then printf '%s\\n' 'authorized_keys already contains controller key' >&2; exit 65; fi`,
+    'cp "$AUTH" "$TMP"',
+    `printf '%s\\n' "$KEY" >> "$TMP"`,
+    'mv "$TMP" "$AUTH"',
+    'chmod 600 "$AUTH"'
+  ].join("; ");
+}
+function windowsRemoteCommand(script) {
+  return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(
+    script,
+    "utf16le"
+  ).toString("base64")}`;
+}
+function windowsAuthorizeScript(authorizedKeyLine, publicKeyBlob) {
+  const encodedLine = Buffer.from(authorizedKeyLine).toString("base64");
+  return [
+    "$ErrorActionPreference='Stop'",
+    "$d=Join-Path $HOME '.ssh'",
+    "New-Item -ItemType Directory -Force -Path $d | Out-Null",
+    "$f=Join-Path $d 'authorized_keys'",
+    `$k=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedLine}'))`,
+    `$b='${publicKeyBlob}'`,
+    "$lines=if(Test-Path -LiteralPath $f){[IO.File]::ReadAllLines($f)}else{@()}",
+    "if(@($lines|Where-Object{($_ -split '\\s+') -contains $b}).Count -gt 0){throw 'authorized_keys already contains controller key'}",
+    '[IO.File]::WriteAllText($f,((@($lines+$k)-join "`n")+"`n"),[Text.UTF8Encoding]::new($false))',
+    '& icacls.exe $f /inheritance:r /grant:r "${env:USERNAME}:F" "SYSTEM:F" | Out-Null',
+    "if($LASTEXITCODE -ne 0){throw 'authorized_keys ACL update failed'}"
+  ].join("; ");
+}
+function macosProbeCommand() {
+  return [
+    "set -e",
+    "printf '%s\\n' __DAWN_FORGE_MACOS_V1__",
+    "id -un",
+    "uname -s",
+    "uname -m",
+    "sw_vers -productVersion",
+    "scutil --get LocalHostName 2>/dev/null || printf '\\n'",
+    "scutil --get ComputerName 2>/dev/null || printf '\\n'",
+    "scutil --get HostName 2>/dev/null || printf '\\n'",
+    "ioreg -rd1 -c IOPlatformExpertDevice"
+  ].join("; ");
+}
+function windowsProbeCommand() {
+  return windowsRemoteCommand(
+    [
+      "$ErrorActionPreference='Stop'",
+      "$machineId=(Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography').MachineGuid",
+      "$value=[ordered]@{marker='__DAWN_FORGE_WINDOWS_V1__';user=[Environment]::UserName;os='Windows';architecture=$env:PROCESSOR_ARCHITECTURE;version=[Environment]::OSVersion.Version.ToString();machineId=$machineId;computerName=$env:COMPUTERNAME}",
+      "$value | ConvertTo-Json -Compress"
+    ].join("; ")
+  );
+}
+function parseMacosProbe(output) {
+  const lines = output.replaceAll("\r", "").split("\n");
+  const machineId = output.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)?.[1];
+  if (lines[0] !== "__DAWN_FORGE_MACOS_V1__" || !lines[1] || lines[2] !== "Darwin" || !lines[3] || !machineId) {
+    throw new TargetInputError("\u65E0\u6CD5\u89E3\u6790 macOS identity probe\u3002");
+  }
+  return {
+    identityEvidence: {
+      sshHostKeyFingerprint: "",
+      machineId,
+      architecture: lines[3],
+      remoteUser: lines[1]
+    }
+  };
+}
+function parseWindowsProbe(output) {
+  let value;
+  try {
+    value = JSON.parse(output.trim());
+  } catch {
+    throw new TargetInputError("\u65E0\u6CD5\u89E3\u6790 Windows identity probe\u3002");
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TargetInputError("\u65E0\u6CD5\u89E3\u6790 Windows identity probe\u3002");
+  }
+  const record = value;
+  if (record.marker !== "__DAWN_FORGE_WINDOWS_V1__" || typeof record.user !== "string" || typeof record.architecture !== "string" || typeof record.machineId !== "string") {
+    throw new TargetInputError("\u65E0\u6CD5\u89E3\u6790 Windows identity probe\u3002");
+  }
+  return {
+    identityEvidence: {
+      sshHostKeyFingerprint: "",
+      machineId: record.machineId,
+      architecture: record.architecture,
+      remoteUser: record.user
+    }
+  };
+}
+var NodeSshTargetAdapter = class {
+  #ssh;
+  #sshKeygen;
+  #run;
+  constructor(ssh = "ssh", sshKeygen = "ssh-keygen", run = defaultProcessRunner) {
+    this.#ssh = ssh;
+    this.#sshKeygen = sshKeygen;
+    this.#run = run;
+  }
+  authorizationCommand(connection, authorizedKeyLine) {
+    const publicKeyBlob = authorizedKeyLine.match(
+      /\bssh-ed25519 ([A-Za-z0-9+/=]+)(?:\s|$)/
+    )?.[1];
+    if (!publicKeyBlob) {
+      throw new TargetInputError("\u65E0\u6CD5\u89E3\u6790 authorized_keys public key\u3002");
+    }
+    const remoteCommand = connection.platform === "windows" ? windowsRemoteCommand(
+      windowsAuthorizeScript(authorizedKeyLine, publicKeyBlob)
+    ) : macosAuthorizeScript(authorizedKeyLine, publicKeyBlob);
+    const args = [
+      "-F",
+      "none",
+      "-o",
+      "ClearAllForwardings=yes",
+      "-o",
+      "ForwardAgent=no",
+      "-o",
+      "ForwardX11=no",
+      "-o",
+      "IdentityAgent=none",
+      "-o",
+      `UserKnownHostsFile=${connection.knownHostsPath}`,
+      "-o",
+      "GlobalKnownHostsFile=none",
+      "-o",
+      "StrictHostKeyChecking=accept-new",
+      "-o",
+      "PubkeyAuthentication=no",
+      "-o",
+      "PreferredAuthentications=password,keyboard-interactive",
+      "-l",
+      connection.user,
+      connection.host,
+      remoteCommand
+    ];
+    return process.platform === "win32" ? windowsControllerCommand(this.#ssh, args) : [this.#ssh, ...args].map(shellQuote).join(" ");
+  }
+  async probe(connection) {
+    const result = this.#run(
+      this.#ssh,
+      [
+        "-F",
+        connection.configPath,
+        connection.alias,
+        connection.platform === "windows" ? windowsProbeCommand() : macosProbeCommand()
+      ],
+      15e3
+    );
+    this.#assertSshSucceeded(result);
+    const parsed = connection.platform === "windows" ? parseWindowsProbe(result.stdout) : parseMacosProbe(result.stdout);
+    return {
+      platform: connection.platform,
+      identityEvidence: {
+        ...parsed.identityEvidence,
+        sshHostKeyFingerprint: this.#hostKeyFingerprint(
+          connection.knownHostsPath
+        )
+      }
+    };
+  }
+  async verifyAuthorization(connection, authorizedKeyLine) {
+    const encodedLine = Buffer.from(authorizedKeyLine).toString("base64");
+    const remoteCommand = connection.platform === "windows" ? windowsRemoteCommand(
+      [
+        "$ErrorActionPreference='Stop'",
+        "$f=Join-Path (Join-Path $HOME '.ssh') 'authorized_keys'",
+        `$k=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedLine}'))`,
+        "if(-not(Test-Path -LiteralPath $f)){throw 'authorized_keys missing'}",
+        "if(-not([IO.File]::ReadAllLines($f) -ccontains $k)){throw 'controlled authorized_keys entry missing'}"
+      ].join("; ")
+    ) : [
+      "set -e",
+      `KEY="$(printf %s '${encodedLine}' | base64 -D)"`,
+      'AUTH="$HOME/.ssh/authorized_keys"',
+      'grep -Fqx -- "$KEY" "$AUTH"'
+    ].join("; ");
+    const result = this.#run(
+      this.#ssh,
+      ["-F", connection.configPath, connection.alias, remoteCommand],
+      15e3
+    );
+    this.#assertSshSucceeded(result);
+  }
+  async rollbackAuthorization(connection, authorizedKeyLine) {
+    const encodedLine = Buffer.from(authorizedKeyLine).toString("base64");
+    const remoteCommand = connection.platform === "windows" ? windowsRemoteCommand(
+      [
+        "$ErrorActionPreference='Stop'",
+        "$f=Join-Path (Join-Path $HOME '.ssh') 'authorized_keys'",
+        `$k=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedLine}'))`,
+        'if(Test-Path -LiteralPath $f){$lines=@([IO.File]::ReadAllLines($f)|Where-Object{$_ -cne $k});$text=if($lines.Count -gt 0){($lines -join "`n")+"`n"}else{\'\'};[IO.File]::WriteAllText($f,$text,[Text.UTF8Encoding]::new($false))}'
+      ].join("; ")
+    ) : [
+      "set -e",
+      `KEY="$(printf %s '${encodedLine}' | base64 -D)"`,
+      'AUTH="$HOME/.ssh/authorized_keys"',
+      `[ ! -f "$AUTH" ] || { TMP="$AUTH.dawn-forge.$$"; trap 'rm -f "$TMP"' EXIT; awk -v key="$KEY" '$0 != key { print }' "$AUTH" > "$TMP"; mv "$TMP" "$AUTH"; chmod 600 "$AUTH"; }`
+    ].join("; ");
+    const result = this.#run(
+      this.#ssh,
+      ["-F", connection.configPath, connection.alias, remoteCommand],
+      15e3
+    );
+    this.#assertSshSucceeded(result);
+  }
+  async revoke(connection, publicKeyBlob) {
+    const remoteCommand = connection.platform === "windows" ? windowsRemoteCommand(
+      [
+        "$ErrorActionPreference='Stop'",
+        "$f=Join-Path (Join-Path $HOME '.ssh') 'authorized_keys'",
+        `if(Test-Path -LiteralPath $f){$b='${publicKeyBlob}';$lines=@([IO.File]::ReadAllLines($f)|Where-Object{-not(($_ -split '\\s+') -contains $b)});$text=if($lines.Count -gt 0){($lines -join "\`n")+"\`n"}else{''};[IO.File]::WriteAllText($f,$text,[Text.UTF8Encoding]::new($false))}`
+      ].join("; ")
+    ) : [
+      "set -e",
+      `BLOB='${publicKeyBlob}'`,
+      'AUTH="$HOME/.ssh/authorized_keys"',
+      `[ ! -f "$AUTH" ] || { TMP="$AUTH.dawn-forge.$$"; trap 'rm -f "$TMP"' EXIT; awk -v blob="$BLOB" '{ keep=1; for (i=1; i<=NF; i++) if ($i == blob) keep=0; if (keep) print }' "$AUTH" > "$TMP"; mv "$TMP" "$AUTH"; chmod 600 "$AUTH"; }`
+    ].join("; ");
+    const result = this.#run(
+      this.#ssh,
+      ["-F", connection.configPath, connection.alias, remoteCommand],
+      15e3
+    );
+    this.#assertSshSucceeded(result);
+  }
+  #hostKeyFingerprint(knownHostsPath) {
+    const result = this.#run(
+      this.#sshKeygen,
+      ["-lf", knownHostsPath],
+      1e4
+    );
+    if (result.error || result.status !== 0) {
+      throw new TargetInputError(
+        result.stderr.trim() || result.error?.message || "\u65E0\u6CD5\u8BFB\u53D6 SSH host key fingerprint\u3002"
+      );
+    }
+    const fingerprints = [
+      ...new Set(result.stdout.match(/\bSHA256:[A-Za-z0-9+/=]+\b/g) ?? [])
+    ].sort();
+    if (fingerprints.length === 0) {
+      throw new TargetInputError("known_hosts \u4E2D\u6CA1\u6709 SSH host key fingerprint\u3002");
+    }
+    return fingerprints.join(",");
+  }
+  #assertSshSucceeded(result) {
+    if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(
+      `${result.stderr}
+${result.stdout}`
+    )) {
+      throw new IdentityConflictError(["sshHostKeyFingerprint"]);
+    }
+    if (result.error || result.status !== 0) {
+      throw new TargetInputError(
+        result.stderr.trim() || result.stdout.trim() || result.error?.message || `SSH \u5931\u8D25\uFF0C\u9000\u51FA\u7801 ${result.status ?? "unknown"}\u3002`
+      );
+    }
+  }
+};
+function createTargetManager(options) {
+  if (process.platform !== "win32") {
+    throw new TargetInputError(
+      "Dawn Engine V1 \u4EC5\u652F\u6301 Windows \u63A7\u5236\u673A\u3002"
+    );
+  }
+  const homeDirectory = options?.homeDirectory ?? homedir2();
+  return new TargetManager({
+    homeDirectory,
+    now: () => /* @__PURE__ */ new Date(),
+    keyProvider: new NodeControllerKeyProvider(
+      homeDirectory,
+      process.env.DAWN_SSH_KEYGEN ?? "ssh-keygen"
+    ),
+    ssh: new NodeSshTargetAdapter(
+      process.env.DAWN_SSH ?? "ssh",
+      process.env.DAWN_SSH_KEYGEN ?? "ssh-keygen"
+    ),
+    authorize: options?.authorize ?? (async () => {
+      throw new TargetNeedsUserError();
+    })
+  });
+}
+
 // src/cli/index.ts
 var usage = `\u7528\u6CD5\uFF1Adawn <command>
 
 \u547D\u4EE4\uFF1A
-  target bootstrap
-  target inspect
-  target revoke
+  target bootstrap --host <host> --user <user> --name <name>
+  target inspect --target <id>
+  target revoke --target <id>
   plan
   apply
   run show --run <runId>
@@ -2008,66 +3112,163 @@ var stateMarkers = {
   running: ">",
   needs_user: "?"
 };
-function fail(message) {
-  console.error(message);
-  process.exit(ExitCode.ParamError);
-}
-function showRun(args) {
-  const runOption = args.indexOf("--run");
-  const runId = runOption === -1 ? void 0 : args[runOption + 1];
-  if (!runId || args.length !== 2 || runOption !== 0) {
-    fail("\u7528\u6CD5\uFF1Adawn run show --run <runId>");
-  }
-  try {
-    const { snapshot } = readRun(runId);
-    console.log(`Run ${runId}`);
-    console.log(`Outcome: ${snapshot.outcome ?? "in-progress"}`);
-    console.log("\nActions:");
-    for (const action of snapshot.actions) {
-      const error = action.state === "failed" && action.error ? `\uFF1A${action.error}` : "";
-      console.log(
-        `  [${stateMarkers[action.state]}] ${action.actionId}  ${action.state}${error}`
-      );
+function parseOptions(args, allowed) {
+  const options = /* @__PURE__ */ new Map();
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (!option?.startsWith("--") || !allowed.has(option) || !value || value.startsWith("--") || options.has(option)) {
+      throw new Error("\u53C2\u6570\u65E0\u6548\u3002");
     }
+    options.set(option, value);
+  }
+  return options;
+}
+function requiredOption(options, name) {
+  const value = options.get(name);
+  if (!value) {
+    throw new Error(`\u7F3A\u5C11\u53C2\u6570\uFF1A${name}`);
+  }
+  return value;
+}
+function showRun(args, stdout) {
+  const options = parseOptions(args, /* @__PURE__ */ new Set(["--run"]));
+  const runId = requiredOption(options, "--run");
+  const { snapshot } = readRun(runId);
+  stdout(`Run ${runId}`);
+  stdout(`Outcome: ${snapshot.outcome ?? "in-progress"}`);
+  stdout("\nActions:");
+  for (const action of snapshot.actions) {
+    const error = action.state === "failed" && action.error ? `\uFF1A${action.error}` : "";
+    stdout(
+      `  [${stateMarkers[action.state]}] ${action.actionId}  ${action.state}${error}`
+    );
+  }
+}
+function targetSummary(target) {
+  return [
+    `Target ${target.targetId}`,
+    `  name: ${target.displayName}`,
+    `  platform: ${target.platform}`,
+    `  machineId: ${target.identityEvidence.machineId}`,
+    `  architecture: ${target.identityEvidence.architecture}`,
+    `  remoteUser: ${target.identityEvidence.remoteUser}`,
+    `  hostKey: ${target.identityEvidence.sshHostKeyFingerprint}`,
+    `  targetFingerprint: ${target.targetFingerprint}`
+  ].join("\n");
+}
+async function confirmAuthorizationCommand(command, stdout) {
+  stdout("\u8BF7\u5728\u63A7\u5236\u673A\u7EC8\u7AEF\u6267\u884C\u4EE5\u4E0B\u547D\u4EE4\uFF0C\u5C06\u53D7\u9650\u516C\u94A5\u5199\u5165\u76EE\u6807\u673A\uFF1A");
+  stdout(command);
+  if (process.env.DAWN_AUTO_CONFIRM === "1") {
+    return true;
+  }
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  try {
+    const answer = await readline.question(
+      "\u547D\u4EE4\u6210\u529F\u5B8C\u6210\u540E\u8F93\u5165 yes \u7EE7\u7EED\uFF1A"
+    );
+    return /^(?:y|yes)$/i.test(answer.trim());
+  } finally {
+    readline.close();
+  }
+}
+function defaultTargetManager(stdout) {
+  return createTargetManager({
+    authorize: (command) => confirmAuthorizationCommand(command, stdout)
+  });
+}
+async function runCli(args, dependencies = {}) {
+  const stdout = dependencies.stdout ?? console.log;
+  const stderr = dependencies.stderr ?? console.error;
+  try {
+    if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+      stdout(usage);
+      return ExitCode.Success;
+    }
+    const command = args[0] === "target" || args[0] === "run" ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0];
+    const knownCommands = /* @__PURE__ */ new Set([
+      "target bootstrap",
+      "target inspect",
+      "target revoke",
+      "plan",
+      "apply",
+      "run show",
+      "resume",
+      "verify"
+    ]);
+    if (!knownCommands.has(command)) {
+      stderr(`\u672A\u77E5\u547D\u4EE4\uFF1A${command}`);
+      return ExitCode.ParamError;
+    }
+    if (command === "run show") {
+      try {
+        showRun(args.slice(2), stdout);
+        return ExitCode.Success;
+      } catch (error) {
+        if (error instanceof SyntaxError || error instanceof Error && "code" in error && error.code === "ENOENT") {
+          stderr(
+            `\u627E\u4E0D\u5230\u6216\u65E0\u6CD5\u8BFB\u53D6 Run\uFF1A${args[args.indexOf("--run") + 1] ?? ""}`
+          );
+          return ExitCode.ParamError;
+        }
+        throw error;
+      }
+    }
+    if (command.startsWith("target ")) {
+      const targetManager = dependencies.targetManager ?? defaultTargetManager(stdout);
+      if (command === "target bootstrap") {
+        const options2 = parseOptions(
+          args.slice(2),
+          /* @__PURE__ */ new Set(["--host", "--user", "--name"])
+        );
+        const target = await targetManager.bootstrap({
+          host: requiredOption(options2, "--host"),
+          user: requiredOption(options2, "--user"),
+          name: requiredOption(options2, "--name")
+        });
+        stdout(targetSummary(target));
+        return ExitCode.Success;
+      }
+      const options = parseOptions(args.slice(2), /* @__PURE__ */ new Set(["--target"]));
+      const targetId = requiredOption(options, "--target");
+      if (command === "target inspect") {
+        stdout(targetSummary(await targetManager.inspect(targetId)));
+      } else {
+        await targetManager.revoke(targetId);
+        stdout(`\u5DF2\u64A4\u9500 Target ${targetId}\uFF1A\u8FDC\u7AEF\u516C\u94A5\u548C\u672C\u5730\u8BB0\u5F55\u5747\u5DF2\u5220\u9664\u3002`);
+      }
+      return ExitCode.Success;
+    }
+    stderr(`\u5C1A\u672A\u5B9E\u73B0\uFF1A${command}`);
+    return ExitCode.ParamError;
   } catch (error) {
-    if (error instanceof SyntaxError || error instanceof Error && "code" in error && error.code === "ENOENT") {
-      fail(`\u627E\u4E0D\u5230\u6216\u65E0\u6CD5\u8BFB\u53D6 Run\uFF1A${runId}`);
+    if (error instanceof Error && "exitCode" in error && typeof error.exitCode === "number") {
+      stderr(error.message);
+      return error.exitCode;
+    }
+    if (error instanceof Error) {
+      stderr(error.message);
+      return ExitCode.ParamError;
     }
     throw error;
   }
 }
-function main(args) {
-  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-    console.log(usage);
-    return;
-  }
-  const command = args[0] === "target" || args[0] === "run" ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0];
-  const knownCommands = /* @__PURE__ */ new Set([
-    "target bootstrap",
-    "target inspect",
-    "target revoke",
-    "plan",
-    "apply",
-    "run show",
-    "resume",
-    "verify"
-  ]);
-  if (!command || !knownCommands.has(command)) {
-    fail(`\u672A\u77E5\u547D\u4EE4\uFF1A${command ?? ""}`);
-  }
-  if (command === "run show") {
-    showRun(args.slice(2));
-    return;
-  }
-  console.error(`\u5C1A\u672A\u5B9E\u73B0\uFF1A${command}`);
-  process.exit(ExitCode.ParamError);
+var entryPath = process.argv[1] ? pathToFileURL(resolveEntryPath(process.argv[1])).href : void 0;
+if (entryPath === import.meta.url) {
+  runCli(process.argv.slice(2)).then((exitCode) => {
+    process.exitCode = exitCode;
+  }).catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }
-try {
-  main(process.argv.slice(2));
-} catch (error) {
-  if (error instanceof Error && "exitCode" in error && typeof error.exitCode === "number") {
-    console.error(error.message);
-    process.exit(error.exitCode);
-  }
-  throw error;
+function resolveEntryPath(path) {
+  return resolve2(path);
 }
+export {
+  runCli
+};

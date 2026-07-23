@@ -2,7 +2,7 @@
 
 ## 运行状态
 
-状态必须在对应修改前创建，不得等到失败后补写。阶段 1 由 `prepare-ssh-bootstrap.mjs finalize` 原子保存目标 identity receipt；阶段 2 由 artifact cache metadata 和网络引导 mini-run receipt 记录；阶段 4 只通过 `scripts/installation-run.mjs prepare --plan <canonical-plan-bundle>` 创建 manifest 与 journal，并遵循 `references/execution.md`。`scripts/installation-run-state.mjs` 是 internal module，不得直接执行。不得声称阶段 4 journal 覆盖更早发生的修改。
+状态必须在对应修改前创建，不得等到失败后补写。阶段 1 在显示授权命令前先写入无秘密 `bootstrap.json` pending state，成功发布 `target.json` 后才清理；`revoke` 也在删除远端 key 前写入 `revoke.json`。硬中断留下的 pending state 是恢复证据，不得删除、覆盖或通过换 alias 绕过。所有 Target 生命周期修改持有同一个 registry exclusive lock。阶段 2 由 artifact cache metadata 和网络引导 mini-run receipt 记录；阶段 4 只通过 `scripts/installation-run.mjs prepare --plan <canonical-plan-bundle>` 创建 manifest 与 journal，并遵循 `references/execution.md`。`scripts/installation-run-state.mjs` 是 internal module，不得直接执行。不得声称阶段 4 journal 覆盖更早发生的修改。
 
 在控制机保存：
 
@@ -19,7 +19,7 @@
 - active `batchId`、`attemptId`、无秘密 owned process token 和 cancellation intent；
 - 无秘密 event journal 和汇总。
 
-alias、`ssh -G` 解析、host-key fingerprint、OS、architecture、系统版本、machine ID 与展示名称保存在阶段 1 identity receipt；artifact 名称、publisher、version、architecture、公开 digest 与校验时间保存在 canonical cache metadata；人工任务的确认与验收通过独立无秘密 receipt 关联到相同 digest。三类状态不得互相伪造。
+SSH alias、host-key fingerprint、architecture、machine ID、远程账号与展示名称保存在阶段 1 `target.json`；artifact 名称、publisher、version、architecture、公开 digest 与校验时间保存在 canonical cache metadata；人工任务的确认与验收通过独立无秘密 receipt 关联到相同 digest。三类状态不得互相伪造。
 
 不得包含 password、subscription、token、private key、带凭据 URL、proxy URL 或敏感命令输出。使用同目录临时文件、fsync 和原子 rename 更新；installer 退出只写 `install=completed`，逐项验证成功后才写软件 `completed`。
 
