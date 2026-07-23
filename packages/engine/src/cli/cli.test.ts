@@ -7,7 +7,12 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { openJournal, type RunSnapshot } from "../journal/index.ts";
-import type { Plan, RunEvent, Target } from "../protocol/index.ts";
+import {
+  computePlanHash,
+  type Plan,
+  type RunEvent,
+  type Target,
+} from "../protocol/index.ts";
 import { IdentityConflictError } from "../target/index.ts";
 import { resolveCatalogDirectory, runCli } from "./index.ts";
 
@@ -66,13 +71,115 @@ test("dawn --help 列出全部 V1 子命令并以 0 退出", () => {
 });
 
 test("尚未实现和未知的命令给出明确说明并以 2 退出", () => {
-  const unimplemented = runDawn(["apply"]);
+  const unimplemented = runDawn(["resume"]);
   assert.equal(unimplemented.status, 2);
-  assert.match(unimplemented.stderr, /尚未实现：apply/);
+  assert.match(unimplemented.stderr, /尚未实现：resume/);
 
   const unknown = runDawn(["unknown"]);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /未知命令：unknown/);
+});
+
+test("dawn apply 在创建 Run 前拒绝错误 approval hash", async () => {
+  await withTempHome(async (homeDirectory) => {
+    const spec = {
+      engineVersion: "1",
+      catalogVersion: "v1",
+      targetId: "office-mac",
+      targetFingerprint: "a".repeat(64),
+      profileHash: "b".repeat(64),
+      actions: [],
+    };
+    const plan: Plan = {
+      spec,
+      planHash: computePlanHash(spec),
+      createdAt: "2026-07-23T12:00:00.000Z",
+    };
+    const planPath = join(homeDirectory, "plan.json");
+    writeFileSync(planPath, `${JSON.stringify(plan)}\n`, "utf8");
+    let called = false;
+    const errors: string[] = [];
+
+    const exitCode = await runCli(
+      [
+        "apply",
+        "--plan",
+        planPath,
+        "--approve",
+        "f".repeat(64),
+      ],
+      {
+        async applyExecutor() {
+          called = true;
+          throw new Error("不应调用");
+        },
+        stdout: () => {},
+        stderr: (message) => errors.push(message),
+      },
+    );
+
+    assert.equal(exitCode, 20);
+    assert.equal(called, false);
+    assert.match(errors.join("\n"), /Plan hash 不匹配/);
+  });
+});
+
+test("dawn apply --format jsonl 每个事件输出一行并包含 runId", async () => {
+  await withTempHome(async (homeDirectory) => {
+    const spec = {
+      engineVersion: "1",
+      catalogVersion: "v1",
+      targetId: "office-mac",
+      targetFingerprint: "a".repeat(64),
+      profileHash: "b".repeat(64),
+      actions: [],
+    };
+    const plan: Plan = {
+      spec,
+      planHash: computePlanHash(spec),
+      createdAt: "2026-07-23T12:00:00.000Z",
+    };
+    const planPath = join(homeDirectory, "plan.json");
+    writeFileSync(planPath, `${JSON.stringify(plan)}\n`, "utf8");
+    const output: string[] = [];
+    const events: RunEvent[] = [
+      {
+        timestamp: "2026-07-23T12:00:01.000Z",
+        runId: "run-jsonl",
+        event: { type: "run-started" },
+      },
+      {
+        timestamp: "2026-07-23T12:00:02.000Z",
+        runId: "run-jsonl",
+        event: { type: "run-completed", summary: "Run 成功完成。" },
+      },
+    ];
+
+    const exitCode = await runCli(
+      [
+        "apply",
+        "--plan",
+        planPath,
+        "--approve",
+        plan.planHash,
+        "--format",
+        "jsonl",
+      ],
+      {
+        async applyExecutor({ emit }) {
+          events.forEach(emit);
+          return { runId: "run-jsonl", exitCode: 0, events };
+        },
+        stdout: (message) => output.push(message),
+        stderr: (message) => output.push(`error:${message}`),
+      },
+    );
+
+    assert.equal(exitCode, 0);
+    assert.equal(output.length, 2);
+    assert.deepEqual(output.map((line) => JSON.parse(line)), events);
+    assert.equal(JSON.parse(output[0]).runId, "run-jsonl");
+  });
 });
 
 test("dawn plan 写出 Plan JSON 并打印 planHash", async () => {

@@ -1532,12 +1532,12 @@ var require_adapter = __commonJS({
       return newFs;
     }
     function toPromise(method) {
-      return (...args) => new Promise((resolve4, reject) => {
+      return (...args) => new Promise((resolve5, reject) => {
         args.push((err, result) => {
           if (err) {
             reject(err);
           } else {
-            resolve4(result);
+            resolve5(result);
           }
         });
         method(...args);
@@ -4561,7 +4561,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve4.call(this, root, ref);
+      let _sch = resolve5.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -4588,7 +4588,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve4(root, ref) {
+    function resolve5(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -5219,7 +5219,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve4(baseURI, relativeURI, options) {
+    function resolve5(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
@@ -5483,7 +5483,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve4,
+      resolve: resolve5,
       resolveComponent,
       equal,
       serialize,
@@ -8733,9 +8733,16 @@ var require__ = __commonJS({
 // src/cli/index.ts
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
-import { homedir as homedir3 } from "node:os";
+import { homedir as homedir4 } from "node:os";
 import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname3, join as join4, resolve as resolve3 } from "node:path";
+import { dirname as dirname3, join as join5, resolve as resolve4 } from "node:path";
+
+// src/executor/index.ts
+import { execFile } from "node:child_process";
+import { lstatSync as lstatSync2, readFileSync as readFileSync3 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join3, resolve as resolve2 } from "node:path";
+import { randomUUID as randomUUID2 } from "node:crypto";
 
 // src/journal/index.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
@@ -8830,6 +8837,13 @@ var ExitCode = {
 };
 
 // src/journal/index.ts
+var JournalLockError = class extends Error {
+  exitCode = ExitCode.LockConflict;
+  constructor(runId) {
+    super(`Run ${runId} \u5DF2\u88AB\u5176\u4ED6\u5199\u5165\u65B9\u9501\u5B9A\u3002`);
+    this.name = "JournalLockError";
+  }
+};
 var JournalConsistencyError = class extends Error {
   exitCode = ExitCode.ParamError;
   constructor(message) {
@@ -8854,6 +8868,63 @@ function getRunDirectory(runId, options) {
   const runsDirectory = options?.runsDirectory ?? join(homedir(), ".dawn-forge", "runs");
   return join(runsDirectory, runId);
 }
+function acquireJournalLock(runDirectory, lockPath, runId) {
+  try {
+    return import_proper_lockfile.default.lockSync(runDirectory, {
+      lockfilePath: lockPath,
+      realpath: false,
+      retries: 0,
+      stale: 3e4,
+      update: 1e4
+    });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
+      throw new JournalLockError(runId);
+    }
+    throw error;
+  }
+}
+function recoverIncompleteJournalTail(journalPath) {
+  let content;
+  try {
+    content = readFileSync(journalPath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  if (content.length === 0 || content[content.length - 1] === 10) {
+    return;
+  }
+  const lastNewline = content.lastIndexOf(10);
+  truncateSync(journalPath, lastNewline + 1);
+  const descriptor = openSync(journalPath, constants.O_WRONLY);
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+function unlinkIfExists(path) {
+  try {
+    unlinkSync(path);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+function fsyncJournalAfterTruncate(journalPath, length) {
+  truncateSync(journalPath, length);
+  const descriptor = openSync(journalPath, constants.O_WRONLY);
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
 function parsePendingCommit(path) {
   let value;
   try {
@@ -8868,6 +8939,33 @@ function parsePendingCommit(path) {
     throw new JournalConsistencyError("commit.pending \u7ED3\u6784\u65E0\u6548\u3002");
   }
   return value;
+}
+function recoverInterruptedCommit(journalPath, pendingSnapshotPath, pendingCommitPath) {
+  const pendingCommit = parsePendingCommit(pendingCommitPath);
+  if (!pendingCommit) {
+    return false;
+  }
+  const journal = readJournalIfExists(journalPath);
+  const expectedEnd = pendingCommit.startOffset + pendingCommit.byteLength;
+  if (pendingCommit.startOffset > journal.length || journal.length > expectedEnd) {
+    throw new JournalConsistencyError(
+      "commit.pending \u7684 Journal offset \u4E0E\u5B9E\u9645\u6587\u4EF6\u4E0D\u4E00\u81F4\u3002"
+    );
+  }
+  if (journal.length < expectedEnd) {
+    fsyncJournalAfterTruncate(journalPath, pendingCommit.startOffset);
+    unlinkIfExists(pendingSnapshotPath);
+    unlinkSync(pendingCommitPath);
+    return false;
+  }
+  const committedBytes = journal.subarray(pendingCommit.startOffset);
+  const actualHash = createHash2("sha256").update(committedBytes).digest("hex");
+  if (actualHash !== pendingCommit.sha256) {
+    throw new JournalConsistencyError(
+      "commit.pending \u8BB0\u5F55\u7684 Journal \u5185\u5BB9 hash \u4E0D\u5339\u914D\u3002"
+    );
+  }
+  return true;
 }
 function visibleJournalBytes(journal, pendingCommitPath) {
   const pendingCommit = parsePendingCommit(pendingCommitPath);
@@ -8891,6 +8989,146 @@ function visibleJournalBytes(journal, pendingCommitPath) {
     );
   }
   return journal;
+}
+function assertImmutableSnapshot(snapshotPath, nextSnapshot) {
+  const current = readSnapshotCandidate(snapshotPath);
+  if (current.error) {
+    throw current.error;
+  }
+  if (!current.snapshot) {
+    return;
+  }
+  if (current.snapshot.planHash !== nextSnapshot.planHash) {
+    throw new JournalConsistencyError("Run \u7684 planHash \u4E0D\u53EF\u53D8\u3002");
+  }
+  if (current.snapshot.createdAt !== nextSnapshot.createdAt) {
+    throw new JournalConsistencyError("Run \u7684 createdAt \u4E0D\u53EF\u53D8\u3002");
+  }
+  const currentActionIds = current.snapshot.actions.map(
+    (action) => action.actionId
+  );
+  const nextActionIds = nextSnapshot.actions.map((action) => action.actionId);
+  if (currentActionIds.length !== nextActionIds.length || currentActionIds.some(
+    (actionId2, index) => actionId2 !== nextActionIds[index]
+  )) {
+    throw new JournalConsistencyError(
+      "Run \u7684 actionId \u5217\u8868\u53CA\u987A\u5E8F\u4E0D\u53EF\u53D8\u3002"
+    );
+  }
+}
+function openJournal(runId, options) {
+  const runDirectory = getRunDirectory(runId, options);
+  const lockPath = join(runDirectory, "lock");
+  const journalPath = join(runDirectory, "journal.jsonl");
+  const snapshotPath = join(runDirectory, "snapshot.json");
+  const pendingSnapshotPath = join(runDirectory, "snapshot.pending");
+  const pendingCommitPath = join(runDirectory, "commit.pending");
+  const pendingCommitTempPath = join(runDirectory, "commit.pending.tmp");
+  mkdirSync(runDirectory, { recursive: true });
+  const releaseJournalLock = acquireJournalLock(runDirectory, lockPath, runId);
+  let journalDescriptor;
+  try {
+    unlinkIfExists(pendingCommitTempPath);
+    recoverIncompleteJournalTail(journalPath);
+    const interruptedCommitCompleted = recoverInterruptedCommit(
+      journalPath,
+      pendingSnapshotPath,
+      pendingCommitPath
+    );
+    recoverPendingSnapshot(
+      runId,
+      journalPath,
+      snapshotPath,
+      pendingSnapshotPath
+    );
+    if (interruptedCommitCompleted) {
+      unlinkSync(pendingCommitPath);
+    }
+    journalDescriptor = openSync(
+      journalPath,
+      constants.O_CREAT | constants.O_APPEND | constants.O_WRONLY,
+      384
+    );
+  } catch (error) {
+    releaseJournalLock();
+    throw error;
+  }
+  let closed = false;
+  function assertOpen() {
+    if (closed) {
+      throw new Error(`Run ${runId} \u7684 Journal \u5DF2\u5173\u95ED\u3002`);
+    }
+  }
+  return {
+    async commit(eventsToCommit, snapshot) {
+      assertOpen();
+      const committedEvents = Array.isArray(eventsToCommit) ? eventsToCommit : [eventsToCommit];
+      if (committedEvents.length === 0) {
+        throw new JournalConsistencyError("\u4E00\u6B21 commit \u81F3\u5C11\u9700\u8981\u4E00\u4E2A\u4E8B\u4EF6\u3002");
+      }
+      for (const event of committedEvents) {
+        if (event.runId !== runId) {
+          throw new JournalConsistencyError(
+            `\u4E8B\u4EF6 runId ${event.runId} \u4E0E ${runId} \u4E0D\u540C\u3002`
+          );
+        }
+      }
+      if (snapshot.runId !== runId) {
+        throw new JournalConsistencyError(
+          `snapshot runId ${snapshot.runId} \u4E0E ${runId} \u4E0D\u540C\u3002`
+        );
+      }
+      const currentJournal = readFileSync(journalPath);
+      const events = parseCommittedEvents(currentJournal);
+      assertImmutableSnapshot(snapshotPath, snapshot);
+      verifySnapshot(runId, snapshot, [...events, ...committedEvents]);
+      const snapshotDescriptor = openSync(
+        pendingSnapshotPath,
+        constants.O_CREAT | constants.O_TRUNC | constants.O_WRONLY,
+        384
+      );
+      try {
+        writeFileSync(snapshotDescriptor, JSON.stringify(snapshot, null, 2));
+        fsyncSync(snapshotDescriptor);
+      } finally {
+        closeSync(snapshotDescriptor);
+      }
+      const journalBytes = Buffer.from(
+        `${committedEvents.map((event) => JSON.stringify(event)).join("\n")}
+`
+      );
+      const pendingCommit = {
+        schemaVersion: 1,
+        startOffset: currentJournal.length,
+        byteLength: journalBytes.length,
+        sha256: createHash2("sha256").update(journalBytes).digest("hex")
+      };
+      const commitDescriptor = openSync(
+        pendingCommitTempPath,
+        constants.O_CREAT | constants.O_TRUNC | constants.O_WRONLY,
+        384
+      );
+      try {
+        writeFileSync(commitDescriptor, JSON.stringify(pendingCommit));
+        fsyncSync(commitDescriptor);
+      } finally {
+        closeSync(commitDescriptor);
+      }
+      renameSync(pendingCommitTempPath, pendingCommitPath);
+      writeFileSync(journalDescriptor, journalBytes);
+      fsyncSync(journalDescriptor);
+      renameSync(pendingSnapshotPath, snapshotPath);
+      unlinkSync(pendingCommitPath);
+    },
+    close() {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      closeSync(journalDescriptor);
+      releaseJournalLock();
+    }
+  };
 }
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -9135,6 +9373,41 @@ function selectConsistentSnapshot(runId, snapshotPath, pendingSnapshotPath, even
     "current \u548C pending snapshot \u5747\u65E0\u6CD5\u5339\u914D Journal\u3002"
   );
 }
+function readJournalIfExists(journalPath) {
+  try {
+    return readFileSync(journalPath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return Buffer.alloc(0);
+    }
+    throw error;
+  }
+}
+function recoverPendingSnapshot(runId, journalPath, snapshotPath, pendingSnapshotPath) {
+  const events = parseCommittedEvents(readJournalIfExists(journalPath));
+  let selected;
+  try {
+    selected = selectConsistentSnapshot(
+      runId,
+      snapshotPath,
+      pendingSnapshotPath,
+      events
+    );
+  } catch (error) {
+    const current = readSnapshotCandidate(snapshotPath);
+    const pending = readSnapshotCandidate(pendingSnapshotPath);
+    if (!current.exists && pending.exists && events.length === 0) {
+      unlinkSync(pendingSnapshotPath);
+      return;
+    }
+    throw error;
+  }
+  if (selected?.source === "pending") {
+    renameSync(pendingSnapshotPath, snapshotPath);
+  } else if (selected?.pendingExists) {
+    unlinkSync(pendingSnapshotPath);
+  }
+}
 function readRun(runId, options) {
   const runDirectory = getRunDirectory(runId, options);
   const snapshotPath = join(runDirectory, "snapshot.json");
@@ -9174,6 +9447,133 @@ function readRun(runId, options) {
     }
   }
   throw lastConsistencyError ?? new JournalConsistencyError("\u65E0\u6CD5\u8BFB\u53D6\u7A33\u5B9A\u7684 Journal \u4E0E snapshot \u89C6\u56FE\u3002");
+}
+
+// src/providers/homebrew.ts
+var HOMEBREW_MANUAL_INSTALL_ERROR = "Homebrew must be installed manually via the official installer; cannot apply automatically.";
+function isHomebrewEntry(params) {
+  return Object.keys(params).length === 0;
+}
+function parseFormulaParams(params) {
+  const keys = Object.keys(params);
+  if (keys.some((key) => key !== "formula" && key !== "cask")) {
+    throw new Error("Homebrew provider received an unknown parameter.");
+  }
+  const formula = params.formula;
+  if (typeof formula !== "string" || formula.length === 0) {
+    throw new Error("Homebrew provider requires a non-empty formula parameter.");
+  }
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9@+._/-]*$/.test(formula)) {
+    throw new Error(`Invalid Homebrew formula: ${formula}`);
+  }
+  if (params.cask !== void 0 && typeof params.cask !== "boolean") {
+    throw new Error("Homebrew provider cask parameter must be boolean.");
+  }
+  return { formula, cask: params.cask === true };
+}
+function listCommand(params) {
+  return params.cask ? `brew list --cask --versions ${params.formula}` : `brew list --versions ${params.formula}`;
+}
+function installCommand(params) {
+  return params.cask ? `brew install --cask ${params.formula}` : `brew install ${params.formula}`;
+}
+function isCommandNotFound(stderr, exitCode) {
+  return exitCode === 127 || /(?:command not found|brew: not found|no such file or directory)/i.test(
+    stderr
+  );
+}
+var HomebrewProvider = class {
+  async check(params, ssh) {
+    if (isHomebrewEntry(params)) {
+      const result2 = await ssh.run("brew --version");
+      if (result2.exitCode !== 0) {
+        return { installed: false };
+      }
+      const version2 = result2.stdout.trim().split(/\r?\n/, 1)[0];
+      return version2 ? { installed: true, version: version2 } : { installed: false };
+    }
+    const formulaParams = parseFormulaParams(params);
+    const result = await ssh.run(listCommand(formulaParams));
+    if (isCommandNotFound(result.stderr, result.exitCode)) {
+      throw new Error(
+        "Homebrew is not installed or the brew command is not available."
+      );
+    }
+    if (result.exitCode !== 0 || result.stdout.trim() === "") {
+      return { installed: false };
+    }
+    const output = result.stdout.trim().split(/\r?\n/, 1)[0];
+    const version = output.startsWith(`${formulaParams.formula} `) ? output.slice(formulaParams.formula.length + 1).trim() : output;
+    return version ? { installed: true, version } : { installed: false };
+  }
+  async apply(params, ssh) {
+    if (isHomebrewEntry(params)) {
+      throw new Error(HOMEBREW_MANUAL_INSTALL_ERROR);
+    }
+    const formulaParams = parseFormulaParams(params);
+    const result = await ssh.run(installCommand(formulaParams));
+    if (isCommandNotFound(result.stderr, result.exitCode)) {
+      throw new Error(
+        "Homebrew is not installed or the brew command is not available."
+      );
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to install Homebrew package: ${formulaParams.formula}`
+      );
+    }
+  }
+  async verify(params, ssh) {
+    const result = await this.check(params, ssh);
+    if (!result.installed) {
+      const name = isHomebrewEntry(params) ? "Homebrew" : parseFormulaParams(params).formula;
+      throw new Error(`${name} is not installed.`);
+    }
+  }
+};
+var homebrewProvider = new HomebrewProvider();
+
+// src/providers/git.ts
+var GIT_VERSION_PATTERN = /^git version (.+)$/;
+function assertEmptyParams(params) {
+  if (Object.keys(params).length !== 0) {
+    throw new Error("Git provider does not accept parameters.");
+  }
+}
+var GitProvider = class {
+  async check(params, ssh) {
+    assertEmptyParams(params);
+    const result = await ssh.run("git --version");
+    if (result.exitCode !== 0) {
+      return { installed: false };
+    }
+    const match = result.stdout.trim().match(GIT_VERSION_PATTERN);
+    return match ? { installed: true, version: match[1] } : { installed: false };
+  }
+  async apply(params, ssh) {
+    assertEmptyParams(params);
+    await homebrewProvider.apply({ formula: "git" }, ssh);
+  }
+  async verify(params, ssh) {
+    assertEmptyParams(params);
+    const result = await this.check({}, ssh);
+    if (!result.installed) {
+      throw new Error("git --version did not return a valid Git version.");
+    }
+  }
+};
+var gitProvider = new GitProvider();
+
+// src/providers/index.ts
+function getProvider(providerName) {
+  switch (providerName) {
+    case "homebrew":
+      return homebrewProvider;
+    case "git":
+      return gitProvider;
+    default:
+      throw new Error(`Unknown provider: ${providerName}`);
+  }
 }
 
 // src/planner/index.ts
@@ -9460,17 +9860,22 @@ function createPlan(input) {
   validateCatalogGraph(catalogById);
   const requested = resolveRequestedEntries(input.profile, catalogById);
   const orderedIds = topologicalOrder(requested, catalogById);
-  const actions = orderedIds.map((id) => {
+  const actions = orderedIds.flatMap((id) => {
     const entry = catalogById.get(id);
-    return {
+    const desiredState = requested.get(id);
+    const type = classify(entry, desiredState, input.snapshot);
+    if (desiredState === "absent" && type === "skip") {
+      return [];
+    }
+    return [{
       actionId: actionId(id),
-      type: classify(entry, requested.get(id), input.snapshot),
+      type,
       packageId: id,
       provider: entry.provider,
       params: entry.params,
       critical: entry.critical,
-      dependsOn: requested.get(id) === "present" ? entry.dependsOn.filter((dependency) => requested.has(dependency)).map(actionId).sort() : []
-    };
+      dependsOn: desiredState === "present" ? entry.dependsOn.filter((dependency) => requested.has(dependency)).map(actionId).sort() : []
+    }];
   });
   const profileJson = input.profile;
   const spec = {
@@ -9599,28 +10004,363 @@ function writePlanAtomic(path, plan) {
   }
 }
 
+// src/executor/index.ts
+var PlanApprovalError = class extends Error {
+  exitCode = ExitCode.PlanInvalid;
+  constructor(message) {
+    super(message);
+    this.name = "PlanApprovalError";
+  }
+};
+function isRecord2(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function assertExactKeys(value, keys, label) {
+  if (Object.keys(value).length !== keys.length || Object.keys(value).some((key) => !keys.includes(key))) {
+    throw new PlanApprovalError(`${label} \u5305\u542B\u672A\u77E5\u6216\u7F3A\u5931\u5B57\u6BB5\u3002`);
+  }
+}
+function parsePlan(value) {
+  if (!isRecord2(value)) {
+    throw new PlanApprovalError("Plan \u7ED3\u6784\u65E0\u6548\u3002");
+  }
+  assertExactKeys(value, ["spec", "planHash", "createdAt"], "Plan");
+  if (!isRecord2(value.spec) || typeof value.planHash !== "string" || !/^[0-9a-f]{64}$/.test(value.planHash) || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt))) {
+    throw new PlanApprovalError("Plan \u7ED3\u6784\u65E0\u6548\u3002");
+  }
+  const spec = value.spec;
+  assertExactKeys(
+    spec,
+    [
+      "engineVersion",
+      "catalogVersion",
+      "targetId",
+      "targetFingerprint",
+      "profileHash",
+      "actions"
+    ],
+    "Plan spec"
+  );
+  if (spec.engineVersion !== "1" || typeof spec.catalogVersion !== "string" || !/^v[0-9]+$/.test(spec.catalogVersion) || typeof spec.targetId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(spec.targetId) || typeof spec.targetFingerprint !== "string" || !/^[0-9a-f]{64}$/.test(spec.targetFingerprint) || typeof spec.profileHash !== "string" || !/^[0-9a-f]{64}$/.test(spec.profileHash) || !Array.isArray(spec.actions)) {
+    throw new PlanApprovalError("Plan spec \u7ED3\u6784\u65E0\u6548\u3002");
+  }
+  const seen = /* @__PURE__ */ new Set();
+  for (const candidate of spec.actions) {
+    if (!isRecord2(candidate)) {
+      throw new PlanApprovalError("Plan Action \u7ED3\u6784\u65E0\u6548\u3002");
+    }
+    assertExactKeys(
+      candidate,
+      [
+        "actionId",
+        "type",
+        "packageId",
+        "provider",
+        "params",
+        "critical",
+        "dependsOn"
+      ],
+      "Plan Action"
+    );
+    if (typeof candidate.actionId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(candidate.actionId) || seen.has(candidate.actionId) || !["install", "skip", "conflict", "manual"].includes(
+      String(candidate.type)
+    ) || typeof candidate.packageId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(candidate.packageId) || typeof candidate.provider !== "string" || !isRecord2(candidate.params) || typeof candidate.critical !== "boolean" || !Array.isArray(candidate.dependsOn) || candidate.dependsOn.some(
+      (dependency) => typeof dependency !== "string" || !seen.has(dependency)
+    ) || new Set(candidate.dependsOn).size !== candidate.dependsOn.length) {
+      throw new PlanApprovalError(
+        "Plan Action \u65E0\u6548\u3001\u672A\u62D3\u6251\u6392\u5E8F\u6216\u4F9D\u8D56\u4E0D\u5B58\u5728\u3002"
+      );
+    }
+    try {
+      getProvider(candidate.provider);
+    } catch {
+      throw new PlanApprovalError(
+        `Plan Action \u4F7F\u7528\u672A\u77E5 provider\uFF1A${candidate.provider}`
+      );
+    }
+    seen.add(candidate.actionId);
+  }
+  return value;
+}
+function readApprovedPlan(path, approval) {
+  if (!/^[0-9a-f]{64}$/.test(approval)) {
+    throw new PlanApprovalError("--approve \u5FC5\u987B\u662F 64 \u4F4D\u5C0F\u5199 SHA-256\u3002");
+  }
+  const resolvedPath = resolve2(path);
+  const stat = lstatSync2(resolvedPath);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new PlanApprovalError("Plan \u5FC5\u987B\u662F regular file\u3002");
+  }
+  let value;
+  try {
+    value = JSON.parse(readFileSync3(resolvedPath, "utf8"));
+  } catch {
+    throw new PlanApprovalError("Plan \u4E0D\u662F\u5408\u6CD5 JSON\u3002");
+  }
+  const plan = parsePlan(value);
+  const computed = computePlanHash(plan.spec);
+  if (computed !== plan.planHash || computed !== approval) {
+    throw new PlanApprovalError(
+      `Plan hash \u4E0D\u5339\u914D\uFF1B\u5B9E\u9645\u4E3A ${computed}\u3002`
+    );
+  }
+  return plan;
+}
+var NodeProviderSshExecutor = class {
+  #configPath;
+  #alias;
+  #ssh;
+  constructor(configPath, alias, ssh = process.env.DAWN_SSH ?? "ssh") {
+    this.#configPath = configPath;
+    this.#alias = alias;
+    this.#ssh = ssh;
+  }
+  async run(command) {
+    return new Promise((resolvePromise) => {
+      execFile(
+        this.#ssh,
+        ["-F", this.#configPath, this.#alias, command],
+        {
+          encoding: "utf8",
+          timeout: 2 * 60 * 60 * 1e3,
+          windowsHide: true,
+          maxBuffer: 4 * 1024 * 1024
+        },
+        (error, stdout, stderr) => {
+          const exitCode = error && "code" in error && typeof error.code === "number" ? error.code : error ? 1 : 0;
+          resolvePromise({ stdout, stderr, exitCode });
+        }
+      );
+    });
+  }
+};
+function descendants(failedActionId, actions) {
+  const result = /* @__PURE__ */ new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const action of actions) {
+      if (!result.has(action.actionId) && action.dependsOn.some(
+        (dependency) => dependency === failedActionId || result.has(dependency)
+      )) {
+        result.add(action.actionId);
+        changed = true;
+      }
+    }
+  }
+  return result;
+}
+async function executePlan(options) {
+  const plan = parsePlan(options.plan);
+  const computedHash = computePlanHash(plan.spec);
+  if (computedHash !== plan.planHash) {
+    throw new PlanApprovalError("\u6267\u884C\u524D Plan hash \u5DF2\u53D8\u5316\u3002");
+  }
+  const now = options.now ?? (() => /* @__PURE__ */ new Date());
+  const runId = options.runId ?? `run-${now().toISOString().replace(/[^0-9]/g, "").slice(0, 17)}-${randomUUID2()}`;
+  const runsDirectory = options.runsDirectory ?? join3(homedir2(), ".dawn-forge", "runs");
+  const journal = openJournal(runId, { runsDirectory });
+  const events = [];
+  const createdAt = now().toISOString();
+  const states = new Map(
+    plan.spec.actions.map((action) => [action.actionId, "pending"])
+  );
+  const timestamps = /* @__PURE__ */ new Map();
+  let outcome = "in-progress";
+  const snapshot = () => ({
+    schemaVersion: 1,
+    runId,
+    planHash: plan.planHash,
+    createdAt,
+    updatedAt: now().toISOString(),
+    actions: plan.spec.actions.map((action) => ({
+      actionId: action.actionId,
+      state: states.get(action.actionId) ?? "pending",
+      ...timestamps.get(action.actionId)
+    })),
+    outcome
+  });
+  const commit = async (values) => {
+    const list = Array.isArray(values) ? values : [values];
+    await journal.commit(list, snapshot());
+    for (const event of list) {
+      events.push(event);
+      options.emit?.(event);
+    }
+  };
+  const makeEvent = (event) => ({
+    timestamp: now().toISOString(),
+    runId,
+    event
+  });
+  let sawFailure = false;
+  try {
+    writePlanAtomic(join3(runsDirectory, runId, "plan.json"), plan);
+    await commit(makeEvent({ type: "run-started" }));
+    while (true) {
+      const action = plan.spec.actions.find(
+        (candidate) => states.get(candidate.actionId) === "pending" && candidate.dependsOn.every(
+          (dependency) => states.get(dependency) === "succeeded"
+        )
+      );
+      if (!action) {
+        break;
+      }
+      const startedAt = now().toISOString();
+      states.set(action.actionId, "running");
+      timestamps.set(action.actionId, { startedAt });
+      await commit(
+        makeEvent({
+          type: "action-started",
+          actionId: action.actionId,
+          message: `\u5F00\u59CB\u5904\u7406 ${action.packageId}`
+        })
+      );
+      if (action.type === "manual") {
+        states.set(action.actionId, "needs_user");
+        await commit(
+          makeEvent({
+            type: "needs-user",
+            actionId: action.actionId,
+            instruction: `\u8BF7\u624B\u52A8\u5B8C\u6210 ${action.packageId} \u540E\u8FD0\u884C dawn resume\u3002`
+          })
+        );
+        return {
+          runId,
+          exitCode: ExitCode.NeedsUser,
+          events
+        };
+      }
+      let operationError;
+      let wasAlreadyInstalled = false;
+      try {
+        if (action.type === "conflict") {
+          throw new Error(`${action.packageId} \u5B58\u5728\u65E0\u6CD5\u81EA\u52A8\u5904\u7406\u7684\u51B2\u7A81\u3002`);
+        }
+        const provider = getProvider(action.provider);
+        const check = await provider.check(action.params, options.ssh);
+        wasAlreadyInstalled = check.installed;
+        if (!check.installed) {
+          if (action.type === "skip") {
+            throw new Error(`${action.packageId} \u4E0D\u518D\u6EE1\u8DB3 skip \u6761\u4EF6\u3002`);
+          }
+          await provider.apply(action.params, options.ssh);
+          await provider.verify(action.params, options.ssh);
+        }
+      } catch (error) {
+        operationError = error;
+      }
+      if (operationError === void 0) {
+        const finishedAt2 = now().toISOString();
+        states.set(action.actionId, "succeeded");
+        timestamps.set(action.actionId, { startedAt, finishedAt: finishedAt2 });
+        await commit(
+          makeEvent({
+            type: "action-succeeded",
+            actionId: action.actionId,
+            message: wasAlreadyInstalled ? `${action.packageId} \u5DF2\u6EE1\u8DB3\uFF0C\u65E0\u9700\u4FEE\u6539\u3002` : `${action.packageId} \u5DF2\u5B89\u88C5\u5E76\u9A8C\u8BC1\u3002`
+          })
+        );
+        continue;
+      }
+      sawFailure = true;
+      const message = operationError instanceof Error ? operationError.message : String(operationError);
+      const finishedAt = now().toISOString();
+      states.set(action.actionId, "failed");
+      timestamps.set(action.actionId, {
+        startedAt,
+        finishedAt,
+        error: message
+      });
+      const failure = makeEvent({
+        type: "action-failed",
+        actionId: action.actionId,
+        message,
+        critical: action.critical
+      });
+      if (action.critical) {
+        outcome = "stopped";
+        await commit([
+          failure,
+          makeEvent({
+            type: "run-stopped",
+            reason: `\u5173\u952E Action ${action.actionId} \u5931\u8D25\u3002`
+          })
+        ]);
+        return {
+          runId,
+          exitCode: ExitCode.ActionFailed,
+          events
+        };
+      }
+      const blockedEvents = [];
+      for (const blockedId of descendants(
+        action.actionId,
+        plan.spec.actions
+      )) {
+        if (states.get(blockedId) !== "pending") {
+          continue;
+        }
+        states.set(blockedId, "blocked");
+        timestamps.set(blockedId, {
+          finishedAt,
+          error: `\u4F9D\u8D56 ${action.actionId} \u5931\u8D25\u3002`
+        });
+        blockedEvents.push(
+          makeEvent({
+            type: "action-blocked",
+            actionId: blockedId,
+            reason: `\u4F9D\u8D56 ${action.actionId} \u5931\u8D25\u3002`
+          })
+        );
+      }
+      await commit([failure, ...blockedEvents]);
+    }
+    const pending = [...states.values()].some(
+      (state) => state === "pending"
+    );
+    if (pending) {
+      throw new PlanApprovalError("Plan \u6CA1\u6709\u53EF\u6267\u884C\u7684\u5C31\u7EEA Action\u3002");
+    }
+    outcome = "completed";
+    await commit(
+      makeEvent({
+        type: "run-completed",
+        summary: sawFailure ? "Run \u5B8C\u6210\uFF0C\u4F46\u5B58\u5728\u90E8\u5206\u5931\u8D25\u3002" : "Run \u6210\u529F\u5B8C\u6210\u3002"
+      })
+    );
+    return {
+      runId,
+      exitCode: sawFailure ? ExitCode.ActionFailed : ExitCode.Success,
+      events
+    };
+  } finally {
+    journal.close();
+  }
+}
+
 // src/target/index.ts
 var import_proper_lockfile2 = __toESM(require_proper_lockfile(), 1);
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import {
   chmodSync,
   closeSync as closeSync3,
   constants as constants3,
   existsSync as existsSync2,
   fsyncSync as fsyncSync3,
-  lstatSync as lstatSync2,
+  lstatSync as lstatSync3,
   mkdirSync as mkdirSync2,
   openSync as openSync3,
-  readFileSync as readFileSync3,
+  readFileSync as readFileSync4,
   readdirSync,
   renameSync as renameSync3,
   rmSync as rmSync2,
   writeFileSync as writeFileSync3
 } from "node:fs";
-import { homedir as homedir2, hostname } from "node:os";
+import { homedir as homedir3, hostname } from "node:os";
 import { isIP } from "node:net";
-import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
+import { dirname as dirname2, join as join4, resolve as resolve3 } from "node:path";
 var IdentityConflictError = class extends Error {
   exitCode = ExitCode.IdentityConflict;
   constructor(fields) {
@@ -9752,7 +10492,7 @@ function buildAuthorizedKeyLine(publicKeyLine, controllerName = hostname()) {
 }
 function writeFileAtomic(path, content, mode = 384) {
   assertRegularDirectory(dirname2(path), "\u539F\u5B50\u5199\u5165\u76EE\u5F55");
-  const temporaryPath = `${path}.${randomUUID2()}.tmp`;
+  const temporaryPath = `${path}.${randomUUID3()}.tmp`;
   const descriptor = openSync3(
     temporaryPath,
     constants3.O_CREAT | constants3.O_EXCL | constants3.O_WRONLY,
@@ -9769,7 +10509,7 @@ function writeFileAtomic(path, content, mode = 384) {
 function assertRegularFile(path, label) {
   let stat;
   try {
-    stat = lstatSync2(path);
+    stat = lstatSync3(path);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       throw new TargetInputError(`${label} \u4E0D\u5B58\u5728\u3002`);
@@ -9781,7 +10521,7 @@ function assertRegularFile(path, label) {
   }
 }
 function assertRegularDirectory(path, label) {
-  const stat = lstatSync2(path);
+  const stat = lstatSync3(path);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new TargetInputError(`${label} \u5FC5\u987B\u662F directory\uFF0C\u4E0D\u80FD\u662F symlink\u3002`);
   }
@@ -9814,8 +10554,8 @@ function storedTargetConnection(target, targetDirectory) {
     host: assertSafeValue(target.connection.host, "\u5B58\u50A8\u7684 host"),
     user: assertSafeValue(target.connection.user, "\u5B58\u50A8\u7684 user"),
     platform: target.platform,
-    configPath: join3(targetDirectory, "ssh_config"),
-    knownHostsPath: join3(targetDirectory, "known_hosts"),
+    configPath: join4(targetDirectory, "ssh_config"),
+    knownHostsPath: join4(targetDirectory, "known_hosts"),
     identityFile: target.connection.identityFile
   };
 }
@@ -9844,8 +10584,8 @@ var TargetManager = class {
   #targetsDirectory;
   constructor(options) {
     this.#options = options;
-    this.#stateDirectory = join3(options.homeDirectory, ".dawn-forge");
-    this.#targetsDirectory = join3(this.#stateDirectory, "targets");
+    this.#stateDirectory = join4(options.homeDirectory, ".dawn-forge");
+    this.#targetsDirectory = join4(this.#stateDirectory, "targets");
   }
   async bootstrap(input) {
     const host = assertSafeValue(input.host, "--host");
@@ -9866,12 +10606,12 @@ var TargetManager = class {
     this.#ensureStateDirectories();
     const releaseLock = this.#acquireTargetLock(targetId);
     try {
-      const finalDirectory = join3(this.#targetsDirectory, targetId);
-      const stagingDirectory = join3(
+      const finalDirectory = join4(this.#targetsDirectory, targetId);
+      const stagingDirectory = join4(
         this.#targetsDirectory,
-        `.${targetId}.bootstrap-${randomUUID2()}`
+        `.${targetId}.bootstrap-${randomUUID3()}`
       );
-      if (existsSync2(join3(finalDirectory, "target.json"))) {
+      if (existsSync2(join4(finalDirectory, "target.json"))) {
         const existing = this.#readTarget(targetId);
         const inputDifferences = [
           ...existing.connection.host !== host ? ["host"] : [],
@@ -9881,7 +10621,7 @@ var TargetManager = class {
           throw new IdentityConflictError(inputDifferences);
         }
         await this.#verifyCurrentIdentity(existing, finalDirectory);
-        const completedBootstrapPath = join3(
+        const completedBootstrapPath = join4(
           finalDirectory,
           "bootstrap.json"
         );
@@ -9910,8 +10650,8 @@ var TargetManager = class {
           host,
           user,
           platform,
-          configPath: join3(stagingDirectory, "ssh_config"),
-          knownHostsPath: join3(stagingDirectory, "known_hosts"),
+          configPath: join4(stagingDirectory, "ssh_config"),
+          knownHostsPath: join4(stagingDirectory, "known_hosts"),
           identityFile: key.privateKeyPath
         };
         writeFileAtomic(
@@ -9920,10 +10660,10 @@ var TargetManager = class {
         );
         authorizedKeyLine = buildAuthorizedKeyLine(
           key.publicKeyLine,
-          `${hostname()}-dawn-${randomUUID2()}`
+          `${hostname()}-dawn-${randomUUID3()}`
         );
         writeFileAtomic(
-          join3(stagingDirectory, "bootstrap.json"),
+          join4(stagingDirectory, "bootstrap.json"),
           `${JSON.stringify(
             {
               schemaVersion: 1,
@@ -9964,8 +10704,8 @@ var TargetManager = class {
         const finalConnection = {
           ...stagingConnection,
           platform,
-          configPath: join3(finalDirectory, "ssh_config"),
-          knownHostsPath: join3(finalDirectory, "known_hosts")
+          configPath: join4(finalDirectory, "ssh_config"),
+          knownHostsPath: join4(finalDirectory, "known_hosts")
         };
         const target = {
           targetId,
@@ -9987,13 +10727,13 @@ var TargetManager = class {
           renderSshConfig(finalConnection)
         );
         writeFileAtomic(
-          join3(stagingDirectory, "target.json"),
+          join4(stagingDirectory, "target.json"),
           `${JSON.stringify(target, null, 2)}
 `
         );
         renameSync3(stagingDirectory, finalDirectory);
         published = true;
-        rmSync2(join3(finalDirectory, "bootstrap.json"), { force: false });
+        rmSync2(join4(finalDirectory, "bootstrap.json"), { force: false });
         return target;
       } catch (error) {
         if (authorized && !published && stagingConnection && authorizedKeyLine) {
@@ -10034,7 +10774,7 @@ var TargetManager = class {
     const releaseLock = this.#acquireTargetLock(targetId);
     try {
       const target = this.#readTarget(targetId);
-      const targetDirectory = join3(this.#targetsDirectory, targetId);
+      const targetDirectory = join4(this.#targetsDirectory, targetId);
       await this.#verifyCurrentIdentity(target, targetDirectory);
       return await operation(target);
     } finally {
@@ -10046,9 +10786,9 @@ var TargetManager = class {
     this.#assertTargetStateAvailable(targetId);
     const releaseLock = this.#acquireTargetLock(targetId);
     try {
-      const targetDirectory = join3(this.#targetsDirectory, targetId);
+      const targetDirectory = join4(this.#targetsDirectory, targetId);
       const target = this.#readTarget(targetId);
-      const revokePath = join3(targetDirectory, "revoke.json");
+      const revokePath = join4(targetDirectory, "revoke.json");
       if (existsSync2(revokePath)) {
         assertRegularFile(revokePath, "revoke pending state");
         throw new TargetInputError(
@@ -10079,13 +10819,13 @@ var TargetManager = class {
     }
   }
   #readTarget(targetId) {
-    const targetDirectory = join3(this.#targetsDirectory, targetId);
-    const targetPath = join3(targetDirectory, "target.json");
+    const targetDirectory = join4(this.#targetsDirectory, targetId);
+    const targetPath = join4(targetDirectory, "target.json");
     try {
       this.#assertExistingStateDirectories();
       assertRegularDirectory(targetDirectory, "Target \u76EE\u5F55");
       assertRegularFile(targetPath, "target.json");
-      return parseStoredTarget(readFileSync3(targetPath, "utf8"), targetId);
+      return parseStoredTarget(readFileSync4(targetPath, "utf8"), targetId);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         throw new TargetInputError(`\u627E\u4E0D\u5230 Target\uFF1A${targetId}`);
@@ -10104,7 +10844,7 @@ var TargetManager = class {
     const connection = storedTargetConnection(target, targetDirectory);
     assertRegularFile(connection.configPath, "Target SSH config");
     assertRegularFile(connection.knownHostsPath, "\u53D7\u63A7 known_hosts");
-    if (readFileSync3(connection.configPath, "utf8") !== renderSshConfig(connection)) {
+    if (readFileSync4(connection.configPath, "utf8") !== renderSshConfig(connection)) {
       throw new TargetInputError("Target SSH config \u5DF2\u6F02\u79FB\u3002");
     }
     const probe = await this.#options.ssh.probe(connection);
@@ -10148,7 +10888,7 @@ var TargetManager = class {
   #acquireTargetLock(targetId) {
     try {
       return import_proper_lockfile2.default.lockSync(this.#targetsDirectory, {
-        lockfilePath: join3(this.#targetsDirectory, ".registry.lock"),
+        lockfilePath: join4(this.#targetsDirectory, ".registry.lock"),
         realpath: false,
         retries: 0,
         // 同步 SSH 最坏连续阻塞约 55 秒；stale 必须留出显著余量。
@@ -10187,7 +10927,7 @@ var TargetManager = class {
       if (!entry.name.startsWith(".") || !entry.name.includes(".bootstrap-") || !entry.isDirectory()) {
         continue;
       }
-      const pendingPath = join3(
+      const pendingPath = join4(
         this.#targetsDirectory,
         entry.name,
         "bootstrap.json"
@@ -10251,7 +10991,7 @@ var NodeControllerKeyProvider = class {
   }
   #read(createIfMissing) {
     assertRegularDirectory(this.#homeDirectory, "\u63A7\u5236\u673A home \u76EE\u5F55");
-    const privateKeyPath = resolve2(
+    const privateKeyPath = resolve3(
       this.#homeDirectory,
       ".ssh",
       "id_ed25519"
@@ -10306,7 +11046,7 @@ var NodeControllerKeyProvider = class {
       chmodSync(privateKeyPath, 384);
       chmodSync(publicKeyPath, 420);
     }
-    const publicKeyLine = readFileSync3(publicKeyPath, "utf8").trim();
+    const publicKeyLine = readFileSync4(publicKeyPath, "utf8").trim();
     const match = publicKeyLine.match(
       /^ssh-ed25519 ([A-Za-z0-9+/=]+)(?: .*)?$/
     );
@@ -10628,7 +11368,7 @@ function createTargetManager(options) {
       "Dawn Engine V1 \u4EC5\u652F\u6301 Windows \u63A7\u5236\u673A\u3002"
     );
   }
-  const homeDirectory = options?.homeDirectory ?? homedir2();
+  const homeDirectory = options?.homeDirectory ?? homedir3();
   return new TargetManager({
     homeDirectory,
     now: () => /* @__PURE__ */ new Date(),
@@ -10654,7 +11394,7 @@ var usage = `\u7528\u6CD5\uFF1Adawn <command>
   target inspect --target <id>
   target revoke --target <id>
   plan --target <id> --profile <path> --out <path>
-  apply
+  apply --plan <path> --approve <sha256> [--format jsonl]
   run show --run <runId>
   resume
   verify`;
@@ -10712,6 +11452,35 @@ function targetSummary(target) {
     `  targetFingerprint: ${target.targetFingerprint}`
   ].join("\n");
 }
+function emitRunEvent(event, format, stdout) {
+  if (format === "jsonl") {
+    stdout(JSON.stringify(event));
+    return;
+  }
+  switch (event.event.type) {
+    case "run-started":
+      stdout(`Run ${event.runId}`);
+      break;
+    case "action-started":
+    case "action-succeeded":
+    case "action-skipped":
+    case "action-failed":
+      stdout(`${event.event.actionId}: ${event.event.message}`);
+      break;
+    case "action-blocked":
+      stdout(`${event.event.actionId}: ${event.event.reason}`);
+      break;
+    case "needs-user":
+      stdout(`${event.event.actionId}: ${event.event.instruction}`);
+      break;
+    case "run-completed":
+      stdout(event.event.summary);
+      break;
+    case "run-stopped":
+      stdout(event.event.reason);
+      break;
+  }
+}
 async function confirmAuthorizationCommand(command, stdout) {
   stdout("\u8BF7\u5728\u63A7\u5236\u673A\u7EC8\u7AEF\u6267\u884C\u4EE5\u4E0B\u547D\u4EE4\uFF0C\u5C06\u53D7\u9650\u516C\u94A5\u5199\u5165\u76EE\u6807\u673A\uFF1A");
   stdout(command);
@@ -10738,17 +11507,17 @@ function defaultTargetManager(stdout) {
 }
 function resolveCatalogDirectory(entryPath2 = process.argv[1]) {
   if (process.env.DAWN_CATALOG_DIRECTORY) {
-    return resolve3(process.env.DAWN_CATALOG_DIRECTORY);
+    return resolve4(process.env.DAWN_CATALOG_DIRECTORY);
   }
   const entryDirectory = dirname3(
-    resolve3(entryPath2 ?? fileURLToPath(import.meta.url))
+    resolve4(entryPath2 ?? fileURLToPath(import.meta.url))
   );
   const candidates = [
-    join4(entryDirectory, "..", "catalog"),
-    join4(entryDirectory, "..", "..", "..", "catalog")
-  ].map((path) => resolve3(path));
+    join5(entryDirectory, "..", "catalog"),
+    join5(entryDirectory, "..", "..", "..", "catalog")
+  ].map((path) => resolve4(path));
   return candidates.find(
-    (path) => existsSync3(join4(path, "catalog.schema.json"))
+    (path) => existsSync3(join5(path, "catalog.schema.json"))
   ) ?? candidates[0];
 }
 async function runCli(args, dependencies = {}) {
@@ -10825,7 +11594,7 @@ async function runCli(args, dependencies = {}) {
         targetId,
         profilePath
       }) : await (async () => {
-        const homeDirectory = homedir3();
+        const homeDirectory = homedir4();
         const manager = dependencies.targetManager ?? defaultTargetManager(stdout);
         const buildPlan = (target) => planFromFiles({
           target,
@@ -10838,6 +11607,47 @@ async function runCli(args, dependencies = {}) {
       writePlanAtomic(outputPath, plan);
       stdout(plan.planHash);
       return ExitCode.Success;
+    }
+    if (command === "apply") {
+      const options = parseOptions(
+        args.slice(1),
+        /* @__PURE__ */ new Set(["--plan", "--approve", "--format"])
+      );
+      const plan = readApprovedPlan(
+        requiredOption(options, "--plan"),
+        requiredOption(options, "--approve")
+      );
+      const requestedFormat = options.get("--format");
+      if (requestedFormat !== void 0 && requestedFormat !== "jsonl") {
+        throw new Error("--format \u4EC5\u652F\u6301 jsonl\u3002");
+      }
+      const format = requestedFormat === "jsonl" ? "jsonl" : "human";
+      const emit = (event) => emitRunEvent(event, format, stdout);
+      const result = dependencies.applyExecutor ? await dependencies.applyExecutor({ plan, emit }) : await (async () => {
+        const homeDirectory = homedir4();
+        const manager = dependencies.targetManager ?? defaultTargetManager(stdout);
+        const applyToTarget = async (target) => {
+          if (target.targetFingerprint !== plan.spec.targetFingerprint) {
+            throw new IdentityConflictError(["targetFingerprint"]);
+          }
+          return executePlan({
+            plan,
+            ssh: new NodeProviderSshExecutor(
+              join5(
+                homeDirectory,
+                ".dawn-forge",
+                "targets",
+                target.targetId,
+                "ssh_config"
+              ),
+              target.locators.sshAlias
+            ),
+            emit
+          });
+        };
+        return manager.withVerifiedTarget ? manager.withVerifiedTarget(plan.spec.targetId, applyToTarget) : applyToTarget(await manager.inspect(plan.spec.targetId));
+      })();
+      return result.exitCode;
     }
     stderr(`\u5C1A\u672A\u5B9E\u73B0\uFF1A${command}`);
     return ExitCode.ParamError;
@@ -10863,7 +11673,7 @@ if (entryPath === import.meta.url) {
   });
 }
 function resolveEntryPath(path) {
-  return resolve3(path);
+  return resolve4(path);
 }
 export {
   resolveCatalogDirectory,

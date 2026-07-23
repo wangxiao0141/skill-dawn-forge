@@ -276,23 +276,28 @@ export function createPlan(input: CreatePlanInput): Plan {
   validateCatalogGraph(catalogById);
   const requested = resolveRequestedEntries(input.profile, catalogById);
   const orderedIds = topologicalOrder(requested, catalogById);
-  const actions: Action[] = orderedIds.map((id) => {
+  const actions: Action[] = orderedIds.flatMap((id) => {
     const entry = catalogById.get(id)!;
-    return {
+    const desiredState = requested.get(id)!;
+    const type = classify(entry, desiredState, input.snapshot);
+    if (desiredState === "absent" && type === "skip") {
+      return [];
+    }
+    return [{
       actionId: actionId(id),
-      type: classify(entry, requested.get(id)!, input.snapshot),
+      type,
       packageId: id,
       provider: entry.provider,
       params: entry.params,
       critical: entry.critical,
       dependsOn:
-        requested.get(id) === "present"
+        desiredState === "present"
           ? entry.dependsOn
               .filter((dependency) => requested.has(dependency))
               .map(actionId)
               .sort()
           : [],
-    };
+    }];
   });
   const profileJson = input.profile as unknown as JsonValue;
   const spec = {

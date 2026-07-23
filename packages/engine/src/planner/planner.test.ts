@@ -158,6 +158,27 @@ test("absent Action 不展开或保留安装依赖", () => {
   );
 });
 
+test("已经满足的 absent 条目不生成语义不明确的 skip Action", () => {
+  const value = createPlan({
+    target,
+    snapshot: {
+      ...snapshot,
+      homebrew: {
+        ...snapshot.homebrew,
+        formulae: snapshot.homebrew.formulae.filter((id) => id !== "gh"),
+      },
+    },
+    profile: {
+      ...profile,
+      packages: [{ id: "gh", state: "absent" }],
+    },
+    catalog,
+    now: new Date("2026-07-23T12:00:00.000Z"),
+  });
+
+  assert.deepEqual(value.spec.actions, []);
+});
+
 test("相同 Target、Profile 和快照产生相同 planHash", () => {
   const first = createPlan({
     target,
