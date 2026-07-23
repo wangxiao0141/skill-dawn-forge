@@ -1,0 +1,52 @@
+[
+  {
+    "id": "homebrew",
+    "provider": "homebrew",
+    "params": {},
+    "critical": true,
+    "dependsOn": []
+  },
+  {
+    "id": "git",
+    "provider": "git",
+    "params": {},
+    "critical": false,
+    "dependsOn": [
+      "homebrew"
+    ]
+  },
+  {
+    "id": "node",
+    "provider": "homebrew",
+    "params": {
+      "formula": "node"
+    },
+    "critical": false,
+    "dependsOn": [
+      "homebrew"
+    ]
+  },
+  {
+    "id": "gh",
+    "provider": "homebrew",
+    "params": {
+      "formula": "gh"
+    },
+    "critical": false,
+    "dependsOn": [
+      "homebrew"
+    ]
+  },
+  {
+    "id": "vscode",
+    "provider": "homebrew",
+    "params": {
+      "formula": "visual-studio-code",
+      "cask": true
+    },
+    "critical": false,
+    "dependsOn": [
+      "homebrew"
+    ]
+  }
+]

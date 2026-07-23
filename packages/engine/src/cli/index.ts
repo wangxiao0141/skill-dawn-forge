@@ -14,6 +14,7 @@ import {
   type ExecutePlanResult,
   type VerifyRunResult,
 } from "../executor/index.ts";
+import type { InspectorSshExecutor } from "../inspector/index.ts";
 import { readRun } from "../journal/index.ts";
 import {
   planFromFiles,
@@ -32,6 +33,7 @@ import {
   IdentityConflictError,
   type TargetManager,
 } from "../target/index.ts";
+import type { SshExecutor } from "../providers/interface.ts";
 
 const usage = `用法：dawn <command>
 
@@ -84,8 +86,24 @@ interface CliDependencies {
   readonly verifyExecutor?: (input: {
     readonly runId: string;
   }) => Promise<VerifyRunResult>;
+  readonly homeDirectory?: string;
+  readonly catalogDirectory?: string;
+  readonly inspectorSsh?: InspectorSshExecutor;
+  readonly providerSsh?: SshExecutor;
+  readonly runsDirectory?: string;
   readonly stdout?: (message: string) => void;
   readonly stderr?: (message: string) => void;
+}
+
+function cliRunsDirectory(dependencies: CliDependencies): string {
+  return (
+    dependencies.runsDirectory ??
+    join(
+      dependencies.homeDirectory ?? homedir(),
+      ".dawn-forge",
+      "runs",
+    )
+  );
 }
 
 function parseOptions(
@@ -121,10 +139,14 @@ function requiredOption(options: Map<string, string>, name: string): string {
 function showRun(
   args: readonly string[],
   stdout: (message: string) => void,
+  runsDirectory?: string,
 ): void {
   const options = parseOptions(args, new Set(["--run"]));
   const runId = requiredOption(options, "--run");
-  const { snapshot } = readRun(runId);
+  const { snapshot } = readRun(
+    runId,
+    runsDirectory ? { runsDirectory } : undefined,
+  );
   stdout(`Run ${runId}`);
   stdout(`Outcome: ${snapshot.outcome ?? "in-progress"}`);
   stdout("\nActions:");
@@ -267,7 +289,7 @@ export async function runCli(
     }
     if (command === "run show") {
       try {
-        showRun(args.slice(2), stdout);
+        showRun(args.slice(2), stdout, cliRunsDirectory(dependencies));
         return ExitCode.Success;
       } catch (error) {
         if (
@@ -328,7 +350,7 @@ export async function runCli(
             profilePath,
           })
         : await (async () => {
-            const homeDirectory = homedir();
+            const homeDirectory = dependencies.homeDirectory ?? homedir();
             const manager =
               dependencies.targetManager ?? defaultTargetManager(stdout);
             const buildPlan = (target: Target) =>
@@ -336,7 +358,9 @@ export async function runCli(
                 target,
                 homeDirectory,
                 profilePath,
-                catalogDirectory: resolveCatalogDirectory(),
+                catalogDirectory:
+                  dependencies.catalogDirectory ?? resolveCatalogDirectory(),
+                ssh: dependencies.inspectorSsh,
               });
             return manager.withVerifiedTarget
               ? manager.withVerifiedTarget(targetId, buildPlan)
@@ -365,7 +389,7 @@ export async function runCli(
       const result = dependencies.applyExecutor
         ? await dependencies.applyExecutor({ plan, emit })
         : await (async () => {
-            const homeDirectory = homedir();
+            const homeDirectory = dependencies.homeDirectory ?? homedir();
             const manager =
               dependencies.targetManager ?? defaultTargetManager(stdout);
             const applyToTarget = async (target: Target) => {
@@ -374,16 +398,19 @@ export async function runCli(
               }
               return executePlan({
                 plan,
-                ssh: new NodeProviderSshExecutor(
-                  join(
-                    homeDirectory,
-                    ".dawn-forge",
-                    "targets",
-                    target.targetId,
-                    "ssh_config",
+                ssh:
+                  dependencies.providerSsh ??
+                  new NodeProviderSshExecutor(
+                    join(
+                      homeDirectory,
+                      ".dawn-forge",
+                      "targets",
+                      target.targetId,
+                      "ssh_config",
+                    ),
+                    target.locators.sshAlias,
                   ),
-                  target.locators.sshAlias,
-                ),
+                runsDirectory: cliRunsDirectory(dependencies),
                 emit,
               });
             };
@@ -409,8 +436,9 @@ export async function runCli(
       const result = dependencies.resumeExecutor
         ? await dependencies.resumeExecutor({ runId, emit })
         : await (async () => {
-            const plan = readRunPlan(runId);
-            const homeDirectory = homedir();
+            const homeDirectory = dependencies.homeDirectory ?? homedir();
+            const runsDirectory = cliRunsDirectory(dependencies);
+            const plan = readRunPlan(runId, runsDirectory);
             const manager =
               dependencies.targetManager ?? defaultTargetManager(stdout);
             const resumeTarget = async (target: Target) => {
@@ -419,16 +447,19 @@ export async function runCli(
               }
               return resumeRun({
                 runId,
-                ssh: new NodeProviderSshExecutor(
-                  join(
-                    homeDirectory,
-                    ".dawn-forge",
-                    "targets",
-                    target.targetId,
-                    "ssh_config",
+                ssh:
+                  dependencies.providerSsh ??
+                  new NodeProviderSshExecutor(
+                    join(
+                      homeDirectory,
+                      ".dawn-forge",
+                      "targets",
+                      target.targetId,
+                      "ssh_config",
+                    ),
+                    target.locators.sshAlias,
                   ),
-                  target.locators.sshAlias,
-                ),
+                runsDirectory,
                 emit,
               });
             };
@@ -444,8 +475,9 @@ export async function runCli(
     const result = dependencies.verifyExecutor
       ? await dependencies.verifyExecutor({ runId })
       : await (async () => {
-          const plan = readRunPlan(runId);
-          const homeDirectory = homedir();
+          const homeDirectory = dependencies.homeDirectory ?? homedir();
+          const runsDirectory = cliRunsDirectory(dependencies);
+          const plan = readRunPlan(runId, runsDirectory);
           const manager =
             dependencies.targetManager ?? defaultTargetManager(stdout);
           const verifyTarget = async (target: Target) => {
@@ -454,16 +486,19 @@ export async function runCli(
             }
             return verifyRun({
               runId,
-              ssh: new NodeProviderSshExecutor(
-                join(
-                  homeDirectory,
-                  ".dawn-forge",
-                  "targets",
-                  target.targetId,
-                  "ssh_config",
+              ssh:
+                dependencies.providerSsh ??
+                new NodeProviderSshExecutor(
+                  join(
+                    homeDirectory,
+                    ".dawn-forge",
+                    "targets",
+                    target.targetId,
+                    "ssh_config",
+                  ),
+                  target.locators.sshAlias,
                 ),
-                target.locators.sshAlias,
-              ),
+              runsDirectory,
             });
           };
           return manager.withVerifiedTarget

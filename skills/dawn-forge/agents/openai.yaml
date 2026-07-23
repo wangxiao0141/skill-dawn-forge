@@ -1,4 +1,4 @@
 interface:
   display_name: "Dawn Forge"
-  short_description: "通过 SSH 配置 macOS 或 Windows 个人电脑"
-  default_prompt: "使用 $dawn-forge 配置目标电脑；一次收集完整登录地址，建联时只让我输入一次目标机登录密码，后续仅在已披露的 sudo 人工步骤中按需输入。仅在直连确实失败时引导必需的 Clash；完整计划确认一次，按实际路由每批最多三个、前台逐项安装验证，停止指令优先。"
+  short_description: "通过 Dawn Engine 安全配置 macOS 个人电脑"
+  default_prompt: "使用 $dawn-forge 注册 macOS 目标机，生成并展示 Plan，待我批准 planHash 后执行并按事件处理恢复。"
