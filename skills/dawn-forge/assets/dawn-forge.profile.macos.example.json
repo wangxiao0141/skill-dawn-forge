@@ -34,7 +34,7 @@
     {
       "id": "clash-verge-rev",
       "name": "Clash Verge Rev",
-      "source": "auto",
+      "source": "official-download",
       "required": false
     },
     {

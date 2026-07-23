@@ -7,8 +7,7 @@
     {
       "id": "clash-verge-rev",
       "name": "Clash Verge Rev",
-      "source": "brew-cask",
-      "package": "clash-verge-rev",
+      "source": "official-download",
       "required": true
     },
     {
