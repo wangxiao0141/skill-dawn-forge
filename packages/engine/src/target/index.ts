@@ -627,6 +627,13 @@ export class TargetManager {
   }
 
   async inspect(targetId: string): Promise<StoredTarget> {
+    return this.withVerifiedTarget(targetId, async (target) => target);
+  }
+
+  async withVerifiedTarget<T>(
+    targetId: string,
+    operation: (target: StoredTarget) => Promise<T>,
+  ): Promise<T> {
     validateTargetId(targetId);
     this.#assertTargetStateAvailable(targetId);
     const releaseLock = this.#acquireTargetLock(targetId);
@@ -634,7 +641,7 @@ export class TargetManager {
       const target = this.#readTarget(targetId);
       const targetDirectory = join(this.#targetsDirectory, targetId);
       await this.#verifyCurrentIdentity(target, targetDirectory);
-      return target;
+      return await operation(target);
     } finally {
       releaseLock();
     }

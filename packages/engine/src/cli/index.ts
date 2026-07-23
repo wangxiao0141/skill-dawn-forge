@@ -1,9 +1,20 @@
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 import { readRun } from "../journal/index.ts";
-import { ExitCode, type ActionState, type Target } from "../protocol/index.ts";
+import {
+  planFromFiles,
+  writePlanAtomic,
+} from "../planner/index.ts";
+import {
+  ExitCode,
+  type ActionState,
+  type Plan,
+  type Target,
+} from "../protocol/index.ts";
 import {
   createTargetManager,
   type BootstrapTargetInput,
@@ -16,7 +27,7 @@ const usage = `用法：dawn <command>
   target bootstrap --host <host> --user <user> --name <name>
   target inspect --target <id>
   target revoke --target <id>
-  plan
+  plan --target <id> --profile <path> --out <path>
   apply
   run show --run <runId>
   resume
@@ -35,11 +46,21 @@ const stateMarkers: Record<ActionState, string> = {
 interface TargetCommands {
   bootstrap(input: BootstrapTargetInput): Promise<Target>;
   inspect(targetId: string): Promise<Target>;
+  withVerifiedTarget?<T>(
+    targetId: string,
+    operation: (target: Target) => Promise<T>,
+  ): Promise<T>;
   revoke(targetId: string): Promise<void>;
 }
 
 interface CliDependencies {
   readonly targetManager?: TargetCommands;
+  readonly planBuilder?: {
+    create(input: {
+      readonly targetId: string;
+      readonly profilePath: string;
+    }): Promise<Plan>;
+  };
   readonly stdout?: (message: string) => void;
   readonly stderr?: (message: string) => void;
 }
@@ -137,6 +158,26 @@ function defaultTargetManager(
   });
 }
 
+export function resolveCatalogDirectory(
+  entryPath = process.argv[1],
+): string {
+  if (process.env.DAWN_CATALOG_DIRECTORY) {
+    return resolve(process.env.DAWN_CATALOG_DIRECTORY);
+  }
+  const entryDirectory = dirname(
+    resolve(entryPath ?? fileURLToPath(import.meta.url)),
+  );
+  const candidates = [
+    join(entryDirectory, "..", "catalog"),
+    join(entryDirectory, "..", "..", "..", "catalog"),
+  ].map((path) => resolve(path));
+  return (
+    candidates.find((path) =>
+      existsSync(join(path, "catalog.schema.json")),
+    ) ?? candidates[0]
+  );
+}
+
 export async function runCli(
   args: readonly string[],
   dependencies: CliDependencies = {},
@@ -213,6 +254,39 @@ export async function runCli(
         await targetManager.revoke(targetId);
         stdout(`已撤销 Target ${targetId}：远端公钥和本地记录均已删除。`);
       }
+      return ExitCode.Success;
+    }
+
+    if (command === "plan") {
+      const options = parseOptions(
+        args.slice(1),
+        new Set(["--target", "--profile", "--out"]),
+      );
+      const targetId = requiredOption(options, "--target");
+      const profilePath = requiredOption(options, "--profile");
+      const outputPath = requiredOption(options, "--out");
+      const plan = dependencies.planBuilder
+        ? await dependencies.planBuilder.create({
+            targetId,
+            profilePath,
+          })
+        : await (async () => {
+            const homeDirectory = homedir();
+            const manager =
+              dependencies.targetManager ?? defaultTargetManager(stdout);
+            const buildPlan = (target: Target) =>
+              planFromFiles({
+                target,
+                homeDirectory,
+                profilePath,
+                catalogDirectory: resolveCatalogDirectory(),
+              });
+            return manager.withVerifiedTarget
+              ? manager.withVerifiedTarget(targetId, buildPlan)
+              : buildPlan(await manager.inspect(targetId));
+          })();
+      writePlanAtomic(outputPath, plan);
+      stdout(plan.planHash);
       return ExitCode.Success;
     }
 

@@ -112,4 +112,8 @@ export const ExitCode = {
 
 export type ExitCode = (typeof ExitCode)[keyof typeof ExitCode];
 
-export { computePlanHash, computeTargetFingerprint } from "./hash.ts";
+export {
+  computePlanHash,
+  computeProfileHash,
+  computeTargetFingerprint,
+} from "./hash.ts";

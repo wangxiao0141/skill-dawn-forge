@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "node build.mjs",
-    "test": "npm run build && node --experimental-strip-types --test src/protocol/hash.test.ts src/journal/journal.test.ts src/target/target.test.ts src/providers/providers.test.ts src/cli/cli.test.ts",
+    "test": "npm run build && node --experimental-strip-types --test src/protocol/hash.test.ts src/journal/journal.test.ts src/target/target.test.ts src/providers/providers.test.ts src/inspector/inspector.test.ts src/planner/planner.test.ts src/cli/cli.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
-import type { IdentityEvidence, PlanSpec } from "./index.ts";
+import type {
+  IdentityEvidence,
+  JsonValue,
+  PlanSpec,
+} from "./index.ts";
 
 function assertValidUnicode(value: string): void {
   for (let index = 0; index < value.length; index += 1) {
@@ -78,4 +82,8 @@ export function computeTargetFingerprint(
   evidence: IdentityEvidence,
 ): string {
   return sha256Jcs(evidence);
+}
+
+export function computeProfileHash(profile: JsonValue): string {
+  return sha256Jcs(profile);
 }

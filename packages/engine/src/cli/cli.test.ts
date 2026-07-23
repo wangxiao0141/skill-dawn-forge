@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { openJournal, type RunSnapshot } from "../journal/index.ts";
-import type { RunEvent, Target } from "../protocol/index.ts";
+import type { Plan, RunEvent, Target } from "../protocol/index.ts";
 import { IdentityConflictError } from "../target/index.ts";
-import { runCli } from "./index.ts";
+import { resolveCatalogDirectory, runCli } from "./index.ts";
 
 interface CommandResult {
   readonly status: number | null;
@@ -65,13 +66,85 @@ test("dawn --help 列出全部 V1 子命令并以 0 退出", () => {
 });
 
 test("尚未实现和未知的命令给出明确说明并以 2 退出", () => {
-  const unimplemented = runDawn(["plan"]);
+  const unimplemented = runDawn(["apply"]);
   assert.equal(unimplemented.status, 2);
-  assert.match(unimplemented.stderr, /尚未实现：plan/);
+  assert.match(unimplemented.stderr, /尚未实现：apply/);
 
   const unknown = runDawn(["unknown"]);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /未知命令：unknown/);
+});
+
+test("dawn plan 写出 Plan JSON 并打印 planHash", async () => {
+  await withTempHome(async (homeDirectory) => {
+    const outputPath = join(homeDirectory, "plan.json");
+    const plan: Plan = {
+      spec: {
+        engineVersion: "1",
+        catalogVersion: "v1",
+        targetId: "office-mac",
+        targetFingerprint: "a".repeat(64),
+        profileHash: "b".repeat(64),
+        actions: [],
+      },
+      planHash: "c".repeat(64),
+      createdAt: "2026-07-23T12:00:00.000Z",
+    };
+    const calls: unknown[] = [];
+    const output: string[] = [];
+
+    const exitCode = await runCli(
+      [
+        "plan",
+        "--target",
+        "office-mac",
+        "--profile",
+        "profile.json",
+        "--out",
+        outputPath,
+      ],
+      {
+        planBuilder: {
+          async create(input) {
+            calls.push(input);
+            return plan;
+          },
+        },
+        stdout: (message) => output.push(message),
+        stderr: (message) => output.push(`error:${message}`),
+      },
+    );
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(calls, [
+      { targetId: "office-mac", profilePath: "profile.json" },
+    ]);
+    assert.deepEqual(
+      JSON.parse(await readFile(outputPath, "utf8")),
+      plan,
+    );
+    assert.deepEqual(output, [plan.planHash]);
+  });
+});
+
+test("Catalog 相对 dawn.mjs 定位，不依赖当前工作目录", async () => {
+  await withTempHome(async (homeDirectory) => {
+    const skillDirectory = join(homeDirectory, "skill");
+    const binDirectory = join(skillDirectory, "bin");
+    const catalogDirectory = join(skillDirectory, "catalog");
+    mkdirSync(binDirectory, { recursive: true });
+    mkdirSync(catalogDirectory, { recursive: true });
+    writeFileSync(
+      join(catalogDirectory, "catalog.schema.json"),
+      "{}\n",
+      "utf8",
+    );
+
+    assert.equal(
+      resolveCatalogDirectory(join(binDirectory, "dawn.mjs")),
+      catalogDirectory,
+    );
+  });
 });
 
 test("target CLI 解析 bootstrap、inspect、revoke 并输出身份摘要", async () => {

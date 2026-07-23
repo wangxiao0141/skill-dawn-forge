@@ -305,6 +305,40 @@ test("Target lifecycle 使用全局排他锁阻止并发修改", async () => {
   }
 });
 
+test("身份复验与受控操作共享同一 Target registry lock", async () => {
+  await withFixture(async ({ manager, ssh }) => {
+    const target = await manager.bootstrap({
+      host: "mac-mini.local",
+      user: "wangxiao",
+      name: "Office Mac",
+    });
+    ssh.probes.push(initialProbe);
+    let releaseOperation: (() => void) | undefined;
+    let markOperationStarted: (() => void) | undefined;
+    const operationStarted = new Promise<void>((resolve) => {
+      markOperationStarted = resolve;
+    });
+    const heldOperation = manager.withVerifiedTarget(
+      target.targetId,
+      async () => {
+        markOperationStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseOperation = resolve;
+        });
+        return "done";
+      },
+    );
+
+    await operationStarted;
+    await assert.rejects(
+      () => manager.revoke(target.targetId),
+      TargetLockError,
+    );
+    releaseOperation?.();
+    assert.equal(await heldOperation, "done");
+  });
+});
+
 test("bootstrap 发现硬中断 pending state 时保留证据并禁止换 name 绕过", async () => {
   await withFixture(async ({
     homeDirectory,
