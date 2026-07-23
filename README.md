@@ -4,7 +4,7 @@
 
 它负责：
 
-- 从零引导 SSH 建联并保存稳定 alias；
+- 默认从没有 SSH 开始，生成控制机 key、建立公钥连接并保存 alias；
 - 根据用户选择的 JSON profile 生成计划并批量安装；
 - 目标机离线时传输 Clash Verge 安装包和配置，由用户手动安装；
 - 配置目标机 GitHub key、通用 SSH key，并验证结果。
@@ -36,7 +36,7 @@ npx skills@latest add wangxiao0141/skill-dawn-forge --skill dawn-forge
 3. Clash 安装与联网（不需要时跳过）
 4. 执行与交付
 
-Agent 会先发现已有 SSH target 和 profile，再集中询问必要信息，不要求用户预先准备 alias 或 profile 路径。
+Agent 首先询问目标机系统和称呼，再引导开启 SSH、取得局域网 hostname/IP，并生成首次登录与设置公钥的命令。控制机默认使用 `~/.ssh/id_ed25519`；已有 key 会验证复用，不存在时才生成。用户无需预先准备 alias 或 profile 路径。
 
 ## Profile
 
