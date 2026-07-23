@@ -36,6 +36,13 @@
       "name": "Clash Verge Rev",
       "source": "auto",
       "required": false
+    },
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "source": "npm-global",
+      "package": "@openai/codex",
+      "required": false
     }
   ],
   "settings": {

@@ -7,7 +7,8 @@
     {
       "id": "clash-verge-rev",
       "name": "Clash Verge Rev",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "clash-verge-rev",
       "required": true
     },
     {
@@ -19,139 +20,162 @@
     {
       "id": "iterm2",
       "name": "iTerm2",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "iterm2",
       "required": true
     },
     {
       "id": "google-chrome",
       "name": "Google Chrome",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "google-chrome",
       "required": true
     },
     {
       "id": "visual-studio-code",
       "name": "Visual Studio Code",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "visual-studio-code",
       "required": true
     },
     {
       "id": "chatgpt",
       "name": "ChatGPT",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "chatgpt",
       "required": true
     },
     {
       "id": "git",
       "name": "Git",
-      "source": "auto",
+      "source": "brew-formula",
+      "package": "git",
       "required": true
     },
     {
       "id": "github-cli",
       "name": "GitHub CLI",
-      "source": "auto",
+      "source": "brew-formula",
+      "package": "gh",
       "required": true
     },
     {
       "id": "aliyun-cli",
       "name": "Alibaba Cloud CLI",
-      "source": "auto",
+      "source": "brew-formula",
+      "package": "aliyun-cli",
       "required": true
     },
     {
       "id": "ripgrep",
       "name": "ripgrep",
-      "source": "auto",
+      "source": "brew-formula",
+      "package": "ripgrep",
       "required": true
     },
     {
       "id": "uv",
       "name": "uv",
-      "source": "auto",
+      "source": "brew-formula",
+      "package": "uv",
       "required": true
     },
     {
       "id": "volta",
       "name": "Volta",
-      "source": "auto",
+      "source": "brew-formula",
+      "package": "volta",
       "required": true
     },
     {
       "id": "orbstack",
       "name": "OrbStack",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "orbstack",
       "required": true
     },
     {
       "id": "snipaste",
       "name": "Snipaste",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "snipaste",
       "required": true
     },
     {
       "id": "stats",
       "name": "Stats",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "stats",
       "required": true
     },
     {
       "id": "maccy",
       "name": "Maccy",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "maccy",
       "required": true
     },
     {
       "id": "wechat-input",
       "name": "WeChat Input",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "wetype",
       "required": true
     },
     {
       "id": "wechat",
       "name": "WeChat",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "wechat",
       "required": true
     },
     {
       "id": "feishu",
       "name": "Feishu",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "feishu",
       "required": true
     },
     {
       "id": "tencent-meeting",
       "name": "Tencent Meeting",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "tencent-meeting",
       "required": true
     },
     {
       "id": "cc-switch",
       "name": "CC Switch",
-      "source": "auto",
+      "source": "brew-cask",
+      "package": "cc-switch",
       "required": true
     },
     {
       "id": "codex",
       "name": "Codex CLI",
-      "source": "auto",
+      "source": "npm-global",
+      "package": "@openai/codex",
       "required": true
     },
     {
       "id": "claude-code",
       "name": "Claude Code",
-      "source": "auto",
+      "source": "npm-global",
+      "package": "@anthropic-ai/claude-code",
       "required": true
     },
     {
       "id": "openspec",
       "name": "OpenSpec",
-      "source": "auto",
+      "source": "npm-global",
+      "package": "@fission-ai/openspec",
       "required": true
     },
     {
       "id": "pnpm",
       "name": "pnpm",
-      "source": "auto",
+      "source": "volta-tool",
+      "package": "pnpm",
       "required": true
     }
   ],

@@ -31,12 +31,14 @@ profile 使用 JSON 描述目标机最终需要的软件、非敏感设置和人
 
 - `id`：小写字母、数字和连字符组成的稳定标识。
 - `name`：展示名称。
-- `source`：可选，默认 `auto`。允许 `auto`、`brew-formula`、`brew-cask`、`mac-app-store`、`winget`、`microsoft-store`、`official-download`、`manual`。
+- `source`：可选，默认 `auto`。允许 `auto`、`brew-formula`、`brew-cask`、`mac-app-store`、`winget`、`microsoft-store`、`npm-global`、`volta-tool`、`official-download`、`manual`。
 - `package`：可选的包标识提示，不是命令或 URL。显式包管理器来源必须提供。
 - `version`：可选；缺省表示最新稳定版。
 - `required`：可选，默认 `true`。
 
 macOS profile 不得使用 `winget` 或 `microsoft-store`；Windows profile 不得使用 Homebrew 或 Mac App Store 来源。不要直接执行 `name` 或 `package`，先解析为受控安装参数并在计划中展示。
+
+`npm-global` 与 `volta-tool` 可跨平台使用，必须提供 `package`。执行前分别验证目标机已有受控 Node.js/npm 或 Volta；缺少的 runtime 必须作为依赖显示在一次性安装计划中，不得静默安装。
 
 ## `settings`
 

@@ -26,6 +26,8 @@ const allowedSources = new Set([
   "mac-app-store",
   "winget",
   "microsoft-store",
+  "npm-global",
+  "volta-tool",
   "official-download",
   "manual",
 ]);
@@ -38,6 +40,8 @@ const windowsOnlySources = new Set(["winget", "microsoft-store"]);
 const packageRequiredSources = new Set([
   ...macosOnlySources,
   ...windowsOnlySources,
+  "npm-global",
+  "volta-tool",
 ]);
 const secretKeyPattern =
   /(?:password|passwd|token|secret|credential|subscription|private.?key|api.?key)/i;
@@ -188,6 +192,20 @@ export function validateProfile(profile) {
             !/^[A-Za-z0-9._-]+$/.test(item.package)
           ) {
             errors.push(`${path}.package: invalid Windows package identifier`);
+          }
+          if (
+            source === "npm-global" &&
+            !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(
+              item.package,
+            )
+          ) {
+            errors.push(`${path}.package: invalid npm package identifier`);
+          }
+          if (
+            source === "volta-tool" &&
+            !/^[a-z0-9][a-z0-9._-]*$/.test(item.package)
+          ) {
+            errors.push(`${path}.package: invalid Volta tool identifier`);
           }
         }
       } else if (packageRequiredSources.has(source)) {

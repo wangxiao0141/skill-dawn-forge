@@ -27,6 +27,23 @@ softwareProfile.software.push({
 });
 assert.deepEqual(validateProfile(softwareProfile), []);
 
+const nodeToolProfile = structuredClone(validProfile);
+nodeToolProfile.software.push(
+  {
+    id: "codex",
+    name: "Codex CLI",
+    source: "npm-global",
+    package: "@openai/codex",
+  },
+  {
+    id: "pnpm",
+    name: "pnpm",
+    source: "volta-tool",
+    package: "pnpm",
+  },
+);
+assert.deepEqual(validateProfile(nodeToolProfile), []);
+
 const secretProfile = structuredClone(validProfile);
 secretProfile.token = "forbidden";
 assert.match(
