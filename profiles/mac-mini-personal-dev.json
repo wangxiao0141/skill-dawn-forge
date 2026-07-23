@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "id": "mac-mini-personal-dev",
+  "name": "Mac mini Personal Dev",
+  "platform": "macos",
+  "software": [
+    {
+      "id": "clash-verge-rev",
+      "name": "Clash Verge Rev",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "homebrew",
+      "name": "Homebrew",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "iterm2",
+      "name": "iTerm2",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "google-chrome",
+      "name": "Google Chrome",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "visual-studio-code",
+      "name": "Visual Studio Code",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "chatgpt",
+      "name": "ChatGPT",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "git",
+      "name": "Git",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "github-cli",
+      "name": "GitHub CLI",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "aliyun-cli",
+      "name": "Alibaba Cloud CLI",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "ripgrep",
+      "name": "ripgrep",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "uv",
+      "name": "uv",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "volta",
+      "name": "Volta",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "orbstack",
+      "name": "OrbStack",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "snipaste",
+      "name": "Snipaste",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "stats",
+      "name": "Stats",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "maccy",
+      "name": "Maccy",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "wechat-input",
+      "name": "WeChat Input",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "wechat",
+      "name": "WeChat",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "feishu",
+      "name": "Feishu",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "tencent-meeting",
+      "name": "Tencent Meeting",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "cc-switch",
+      "name": "CC Switch",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "openspec",
+      "name": "OpenSpec",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "pnpm",
+      "name": "pnpm",
+      "source": "auto",
+      "required": true
+    }
+  ],
+  "settings": {
+    "ssh": {
+      "githubKey": true,
+      "generalKey": true
+    }
+  },
+  "manualTasks": [
+    "在目标机本地完成 Clash Verge Rev 首次启动、网络扩展授权、订阅输入和系统代理或 TUN 启用。",
+    "在目标机本地完成需要 Apple ID、账号登录、许可证或系统扩展授权的软件首次配置。",
+    "在目标机本地为新建的 GitHub key 和 general key 选择 passphrase，并完成需要的第三方账户绑定。"
+  ]
+}
