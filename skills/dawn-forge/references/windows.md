@@ -55,7 +55,7 @@ Winget 不适用而使用 `.msi` 或 `.exe` 时：
 
 用户说明目标机离线，或目标机无法访问本次计划所需官方端点时，完整执行 `references/network-bootstrap.md`。必须由控制机下载官方 installer 并通过局域网 `scp` 传到目标机 Downloads 目录；在代理/TUN 联网验证通过前，不运行 Winget 或其他联网步骤。
 
-订阅、账号和 GUI 授权由用户在目标机本地完成，不进入 profile、聊天、日志或临时文件。完成后读取目标机实际系统 proxy/TUN 状态，并验证当前安装计划所需的官方端点。
+Clash Verge Rev 启动后，按 `references/configuration-handoff.md` 把订阅 URL 或其他配置文件传到 `%USERPROFILE%\Downloads\dawn-forge\`；缺少必要配置时先向用户索要。用户手动应用配置并完成 GUI 授权。完成后读取目标机实际系统 proxy/TUN 状态，并验证当前安装计划所需的官方端点。
 
 ## 设置与人工任务
 

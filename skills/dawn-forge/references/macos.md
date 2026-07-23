@@ -40,10 +40,10 @@ https://github.com/clash-verge-rev/clash-verge-rev
 
 - 安装并首次打开；
 - 处理 Gatekeeper、网络扩展、helper 或系统代理授权；
-- 在目标机本地输入订阅，或按 `references/secret-handoff.md` 从控制机剪贴板临时交接后粘贴；
+- 从 `~/Downloads/dawn-forge/` 读取 Agent 传入的配置并手动导入；
 - 选择节点并启用系统代理或 TUN。
 
-Agent 不读取订阅，不截取 GUI 配置文件，不创建订阅临时文件。
+Clash 订阅 URL 作为 `clash-subscription-url.txt` 传入；其他配置文件使用原文件名传入。Agent 不替用户操作 GUI。
 
 完成后读取 `scutil --proxy`、进程和应用 bundle 信息，验证代理真实运行。根据系统代理实际 host/port 为当前下载进程设置临时环境；不要把 proxy URL 写入 profile 或运行状态。至少验证当前安装计划所需的官方端点。
 

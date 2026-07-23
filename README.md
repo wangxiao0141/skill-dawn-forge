@@ -8,7 +8,7 @@
 - 稳定 SSH alias、既有管理身份复用与首次建联；
 - platform-specific profile、软件计划和一次确认后的批量安装；
 - 离线目标机的代理客户端控制机下载、局域网上传与联网门禁；
-- 订阅等 GUI 秘密的控制机剪贴板到目标机剪贴板临时交接；
+- 文字配置和现有配置文件的目标机交接；
 - 可选代理客户端、GitHub 专用 key 与通用 SSH key 配置；
 - 状态验证、失败恢复和后续重复执行。
 
@@ -44,7 +44,7 @@ npx.cmd skills@latest add . --list
 使用 $dawn-forge，以 target `personal-target` 和 profile `/path/to/profile.json` 配置目标电脑。
 ```
 
-从 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 复制空 profile 模板；需要完整参考时查看 [`dawn-forge.profile.macos.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.macos.example.json)。profile 不得保存订阅、password、token 或 private key；示例软件集合不得被当作默认需求。
+从 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 复制空 profile 模板；需要完整参考时查看 [`dawn-forge.profile.macos.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.macos.example.json)。profile 不保存实际配置内容；Agent 在运行时索要缺失配置，并把文字配置或现有配置文件统一传到目标机供用户手动应用。示例软件集合不得被当作默认需求。
 
 仓库根目录的 `profiles/` 用于维护仓库所有者自己的真实 profile。它由 Git 管理，但位于可安装 Skill 目录之外，因此不会被 `npx skills` 带到使用者的安装目录。
 
