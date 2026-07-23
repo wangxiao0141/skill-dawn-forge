@@ -46,6 +46,8 @@
 
 **控制机命令被 wrapper 替换**：检查命令解析路径；deny shim 或未知 wrapper 的输出不得视为真实执行结果。
 
+**Windows 到 macOS 的 shell 出现 `\r: command not found`**：控制机文本 pipeline 改写了换行。重新以 UTF-8 无 BOM、LF 传输并校验内容；不要修改目标 shell 或关闭错误检查。
+
 **host key 变化**：停止并展示已知 fingerprint 与当前 alias 解析，不自动清除 `known_hosts`。
 
 **管理身份失败**：验证 `ssh -G`、指定 `IdentityFile`、key pair 与 `IdentitiesOnly yes`；不要尝试其他默认 key。

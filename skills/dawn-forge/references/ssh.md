@@ -18,6 +18,7 @@
 - Windows：通过 `Get-Command ssh -All`、`where.exe ssh` 确认真实 executable。
 - 如果裸命令解析到 sandbox deny shim、`.bat`、`.cmd` 或未知 wrapper，不要把其输出当成 SSH 结果；获得工具授权后调用已验证的系统 executable 绝对路径。
 - 同一次运行对 `ssh -G`、连接和 `scp` 使用同一套已验证工具。
+- Windows 控制机向 macOS 目标机传输 shell 脚本时，必须使用 UTF-8 无 BOM 与 LF；不要假设 PowerShell 文本 pipeline 会保持原始换行。可在上传前后比较 SHA-256，或以不会重编码 stdin 的方式传输。出现 `\r: command not found` 时按控制机传输编码故障处理，不得误判为目标命令失败或忽略错误继续。
 
 ## 稳定 alias 与管理身份
 
