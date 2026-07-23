@@ -2,25 +2,40 @@
 
 ## 运行状态
 
+状态必须在对应修改前创建，不得等到失败后补写。阶段 1 由 `prepare-ssh-bootstrap.mjs finalize` 原子保存目标 identity receipt；阶段 2 由 artifact cache metadata 和网络引导 mini-run receipt 记录；阶段 4 只通过 `scripts/installation-run.mjs prepare --plan <canonical-plan-bundle>` 创建 manifest 与 journal，并遵循 `references/execution.md`。`scripts/installation-run-state.mjs` 是 internal module，不得直接执行。不得声称阶段 4 journal 覆盖更早发生的修改。
+
 在控制机保存：
 
 ```text
-~/.dawn-forge/targets/<normalized-target-alias>/runs/<run-id>.json
+~/.dawn-forge/targets/<normalized-target-alias>/runs/<run-id>/manifest.json
+~/.dawn-forge/targets/<normalized-target-alias>/runs/<run-id>/state/<state-run-key>.json
 ```
 
-状态只能包含：
+阶段 4 安装 journal 只包含：
 
 - schema version；
-- profile 路径、SHA-256、`id` 与 `platform`；
-- target alias 及 `ssh -G` 解析后的非秘密连接字段；
-- SSH host-key fingerprint；
-- 目标 OS、architecture、系统版本、machine ID，以及仅供展示的 hostname/平台原生名称；
-- 各阶段状态和时间；
-- 软件动作结果；
-- artifact 名称、官方来源、版本和公开 digest；
-- 待完成的人工任务。
+- run ID、profile SHA-256、schedule SHA-256、`targetIdentitySha256`、revision 与时间；
+- 批次及软件动作的独立 `fetch`、`install`、`verify` 结果；
+- active `batchId`、`attemptId`、无秘密 owned process token 和 cancellation intent；
+- 无秘密 event journal 和汇总。
 
-不得包含 password、subscription、token、private key、proxy URL 或敏感命令输出。使用同目录临时文件和原子 rename 更新；修改前写 `in_progress`，验证成功后才写 `completed`。
+alias、`ssh -G` 解析、host-key fingerprint、OS、architecture、系统版本、machine ID 与展示名称保存在阶段 1 identity receipt；artifact 名称、publisher、version、architecture、公开 digest 与校验时间保存在 canonical cache metadata；人工任务的确认与验收通过独立无秘密 receipt 关联到相同 digest。三类状态不得互相伪造。
+
+不得包含 password、subscription、token、private key、带凭据 URL、proxy URL 或敏感命令输出。使用同目录临时文件、fsync 和原子 rename 更新；installer 退出只写 `install=completed`，逐项验证成功后才写软件 `completed`。
+
+`status`/`observe` 只读上述本地 journal 并标注 freshness，不进行 SSH、DNS、HTTP 或 package manager 查询。尤其不得在活动安装期间用 `brew list`、`brew info`、`brew doctor`、`winget list`、`pgrep` 或固定 sleep 判断进度。
+
+## 运行生命周期与取消
+
+同一 machine ID 只允许一个修改 run，alias 级锁只作为第一层保护。状态更新必须持有同目录 exclusive lock 并检查 `expectedRevision`；冲突立即失败并重新读取，不以固定 sleep 轮询。开始批次前记录 schedule digest 和所有权；没有 owned process acknowledgment 时不启动 package manager。
+
+显式 `cancel`、`停止` 或范围切换优先于诊断：
+
+1. 先原子记录 `cancel-pending`；
+2. 只向 active `batchId` / `attemptId` 的 owned handle 发送中断，不按进程名杀除；
+3. runner 停止启动下一项并等待该 handle 退出；
+4. 能证明退出时写 `cancelled`；断连或所有权不明时保持 `cancel-pending`；
+5. 已验证项保持成功，中断项进入 `not-verified`，不删除 package manager lock 或 cache。
 
 ## 恢复规则
 
@@ -30,12 +45,12 @@
 2. 重新解析同一 target alias，核对 `HostName`、`User`、`IdentityFile` 和 host key。
 3. 重新探测目标 OS、architecture、系统版本、machine ID 和平台原生网络名称。
 4. 已记录的 host key 或 machine ID 变化，或账号、平台、architecture 与目标不符时停止。
-5. 重新探测每个阶段的真实状态，不因 state 写着 `completed` 就跳过验证。
+5. 先 reconcile run-state、owned attempt 和逐项 receipt；不因 state 写着 `completed` 或 SSH 命令已经返回就跳过验证，也不重复启动 active batch。
 6. 只重试已证明幂等的步骤；GUI installer、管理员授权和未知状态 installer 必须先检查。
 
-普通 hostname、`ComputerName`、`LocalHostName` 等可变名称发生变化时更新展示信息，不把名称变化单独视为错连，也不向用户增加确认步骤。连接地址失效时才重新发现可用 hostname/IP。
+普通 hostname、`ComputerName`、`LocalHostName` 等可变名称发生变化时更新展示信息，不把名称变化单独视为错连，也不向用户增加确认步骤。`.local` 瞬时失败时先做最多三次短时有界重连；仍失败才请求 IPv4，不在每次 SSH 调用前重复发现。
 
-同一规范化 target alias 只允许一个修改流程。锁已占用时拒绝启动；不同 alias 指向同一机器时无法自动识别，禁止通过换 alias 绕过。
+同一规范化 target alias 和同一已知 machine ID 都只允许一个修改流程。锁已占用时拒绝启动；禁止通过换 alias 绕过。
 
 ## 文件恢复
 
@@ -58,9 +73,9 @@
 
 **代理失败**：保留已验证 artifact，检查签名、GUI 授权和目标机实际 proxy/TUN；不索要订阅。
 
-**包管理器中断**：检查正在运行的 installer、package receipt、平台包管理器健康状态和待重启状态；不要直接删除包管理器目录后重装。
+**包管理器中断**：先读取 run-state 并核对 owned attempt。owned process 已退出后才检查 package receipt、平台包管理器健康状态和待重启状态；不要用 package manager 查询监视活动进程，也不要直接删除 package manager 目录或 lock 后重装。
 
-**软件部分成功**：重新探测已满足项并标记 `skip`；失败项重新进入计划，不重复安装已验证项。
+**软件部分成功**：保留每项 `fetch/install/verify` 事实；已验证项标记 `completed` 或恢复计划中的 `skip`，失败项及其依赖重新进入计划，不重复安装已验证项，也不把整批说成“一个都没装”。
 
 ## 完成条件
 

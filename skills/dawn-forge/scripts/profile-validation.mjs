@@ -48,6 +48,15 @@ const secretKeyPattern =
 const privateKeyPattern = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
 const credentialUrlPattern =
   /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i;
+const urlPattern = /\b[a-z][a-z0-9+.-]*:\/\/|(?:^|\s)www\./i;
+const controlCharacterPattern = /[\u0000-\u001f\u007f-\u009f]/u;
+const commandInterpolationPattern =
+  /(?:`|\$\(|\$\{|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)/;
+const shellOperatorPattern = /(?:&&|\|\||[;&|]|<{1,2}|>{1,2})/;
+const obviousCommandPattern =
+  /^\s*(?:(?:PS(?:\s+[^>]*)?>|\$|>)\s*)?(?:sudo\s+)?(?:bash|brew|chmod|chown|cmd(?:\.exe)?|cp|curl|git|mkdir|mv|node|npm|npx|open|pnpm|powershell|pwsh|python(?:3)?|rm|scp|sh|ssh|start-process|winget|wget|yarn|zsh)(?:\s|$)/i;
+const safePackagePattern = /^[A-Za-z0-9@+._/:-]+$/;
+const safeVersionPattern = /^[A-Za-z0-9][A-Za-z0-9.+_~^-]*$/;
 
 function isPlainObject(value) {
   return (
@@ -64,7 +73,7 @@ export function validateProfile(profile) {
   function rejectUnknownKeys(value, allowed, path) {
     if (!isPlainObject(value)) return;
     for (const key of Object.keys(value)) {
-      if (!allowed.has(key)) errors.push(`${path}.${key}: unknown field`);
+      if (!allowed.has(key)) errors.push(`${path}: contains an unknown field`);
     }
   }
 
@@ -76,9 +85,11 @@ export function validateProfile(profile) {
     if (isPlainObject(value)) {
       for (const [key, child] of Object.entries(value)) {
         if (secretKeyPattern.test(key)) {
-          errors.push(`${path}.${key}: secret-like fields are forbidden`);
+          errors.push(`${path}: secret-like fields are forbidden`);
         }
-        scanForSecrets(child, `${path}.${key}`);
+        // Object keys are untrusted too. Keep only the nearest safe parent path
+        // so a key containing a token or URL cannot be reflected in an error.
+        scanForSecrets(child, path);
       }
       return;
     }
@@ -101,7 +112,90 @@ export function validateProfile(profile) {
       errors.push(`${path}: must be at most ${maxLength} characters`);
       return false;
     }
+    if (controlCharacterPattern.test(value)) {
+      errors.push(`${path}: control characters are forbidden`);
+      return false;
+    }
     return true;
+  }
+
+  function rejectUnsafeCommonString(value, path) {
+    let safe = true;
+    if (controlCharacterPattern.test(value)) {
+      errors.push(`${path}: control characters are forbidden`);
+      safe = false;
+    }
+    if (urlPattern.test(value)) {
+      errors.push(`${path}: URLs are forbidden`);
+      safe = false;
+    }
+    if (commandInterpolationPattern.test(value)) {
+      errors.push(`${path}: command interpolation is forbidden`);
+      safe = false;
+    }
+    if (shellOperatorPattern.test(value)) {
+      errors.push(`${path}: shell operators are forbidden`);
+      safe = false;
+    }
+    return safe;
+  }
+
+  function validatePackage(value, path) {
+    if (!requireNonEmptyString(value, path, 160)) return;
+
+    rejectUnsafeCommonString(value, path);
+    const normalized = value.trim();
+
+    if (normalized !== value) {
+      errors.push(`${path}: surrounding whitespace is forbidden`);
+    }
+    if (/\s/u.test(value)) {
+      errors.push(`${path}: whitespace is forbidden`);
+    }
+    if (normalized.startsWith("-")) {
+      errors.push(`${path}: leading options are forbidden`);
+    }
+    if (value.includes("\\")) {
+      errors.push(`${path}: backslashes are forbidden`);
+    }
+    if (/^(?:\/|[A-Za-z]:)/.test(normalized)) {
+      errors.push(`${path}: absolute paths are forbidden`);
+    }
+
+    const pathSegments = normalized.split("/");
+    if (
+      pathSegments.some(
+        (segment) => segment.length === 0 || segment === "." || segment === "..",
+      )
+    ) {
+      errors.push(`${path}: empty or traversal path segments are forbidden`);
+    }
+    if (!safePackagePattern.test(value)) {
+      errors.push(`${path}: contains unsupported identifier characters`);
+    }
+  }
+
+  function validateVersion(value, path) {
+    if (!requireNonEmptyString(value, path, 80)) return;
+
+    rejectUnsafeCommonString(value, path);
+    const normalized = value.trim();
+
+    if (normalized !== value) {
+      errors.push(`${path}: surrounding whitespace is forbidden`);
+    }
+    if (/\s/u.test(value)) {
+      errors.push(`${path}: whitespace is forbidden`);
+    }
+    if (normalized.startsWith("-")) {
+      errors.push(`${path}: leading options are forbidden`);
+    }
+    if (/[\\/]/.test(value) || value === "." || value === "..") {
+      errors.push(`${path}: paths and traversal are forbidden`);
+    }
+    if (!safeVersionPattern.test(value)) {
+      errors.push(`${path}: contains unsupported version characters`);
+    }
   }
 
   if (!isPlainObject(profile)) {
@@ -167,20 +261,21 @@ export function validateProfile(profile) {
 
       const source = item.source ?? "auto";
       if (!allowedSources.has(source)) {
-        errors.push(`${path}.source: unsupported source '${source}'`);
+        errors.push(`${path}.source: unsupported source`);
       }
       if (profile.platform === "macos" && windowsOnlySources.has(source)) {
-        errors.push(`${path}.source: '${source}' is incompatible with macos`);
+        errors.push(`${path}.source: source is incompatible with macos`);
       }
       if (profile.platform === "windows" && macosOnlySources.has(source)) {
-        errors.push(`${path}.source: '${source}' is incompatible with windows`);
+        errors.push(`${path}.source: source is incompatible with windows`);
       }
 
       if (item.package !== undefined) {
-        if (requireNonEmptyString(item.package, `${path}.package`, 160)) {
-          if (/^[a-z][a-z0-9+.-]*:\/\//i.test(item.package)) {
-            errors.push(`${path}.package: URLs are forbidden`);
-          }
+        validatePackage(item.package, `${path}.package`);
+        if (
+          typeof item.package === "string" &&
+          item.package.trim().length > 0
+        ) {
           if (
             macosOnlySources.has(source) &&
             !/^[A-Za-z0-9@+._/-]+$/.test(item.package)
@@ -209,11 +304,11 @@ export function validateProfile(profile) {
           }
         }
       } else if (packageRequiredSources.has(source)) {
-        errors.push(`${path}.package: required for source '${source}'`);
+        errors.push(`${path}.package: required for selected source`);
       }
 
       if (item.version !== undefined) {
-        requireNonEmptyString(item.version, `${path}.version`, 80);
+        validateVersion(item.version, `${path}.version`);
       }
       if (item.required !== undefined && typeof item.required !== "boolean") {
         errors.push(`${path}.required: must be a boolean`);
@@ -275,7 +370,14 @@ export function validateProfile(profile) {
       errors.push("$.manualTasks: must be an array");
     } else {
       profile.manualTasks.forEach((task, index) => {
-        requireNonEmptyString(task, `$.manualTasks[${index}]`, 300);
+        const path = `$.manualTasks[${index}]`;
+        if (!requireNonEmptyString(task, path, 300)) return;
+        rejectUnsafeCommonString(task, path);
+        if (obviousCommandPattern.test(task)) {
+          errors.push(
+            `${path}: command-like content is forbidden; manual tasks are display-only`,
+          );
+        }
       });
     }
   }

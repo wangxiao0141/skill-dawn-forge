@@ -17,15 +17,17 @@ let profile;
 
 try {
   raw = await readFile(profilePath, "utf8");
-} catch (error) {
-  console.error(`Cannot read profile: ${error.message}`);
+} catch {
+  console.error("Profile validation failed:");
+  console.error("- $: profile file cannot be read");
   process.exit(2);
 }
 
 try {
   profile = JSON.parse(raw);
-} catch (error) {
-  console.error(`Invalid JSON: ${error.message}`);
+} catch {
+  console.error("Profile validation failed:");
+  console.error("- $: invalid JSON");
   process.exit(2);
 }
 

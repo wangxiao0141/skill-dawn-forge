@@ -12,11 +12,12 @@ profile 使用 JSON 描述目标机最终需要的软件、非敏感设置和人
 2. 检查当前工作区 `profiles/` 下的 JSON 文件，不扫描 Skill 的 `assets/`。
 3. 每个文件都必须运行 `scripts/validate-profile.mjs`；禁止通过 `Get-Content`、正则、字符位置或模型阅读自行判断 JSON 是否有效。
 4. 只使用 validator 输出的 `profileName`、`platform`、`software`、`settings` 和 `manualTasks` 生成候选摘要。
-5. 过滤目标平台不一致的候选，再明确询问“是否给这台目标电脑使用这个 profile”。
-6. 即使只有一个匹配候选，也只能标为推荐项，必须等待用户确认。
-7. 没有有效候选时，报告 validator 的原始错误。先自动完成只读诊断，再询问用户修复现有文件还是创建空模板。
+5. 过滤目标平台不一致的候选。多个匹配候选时先让用户选择；只有一个匹配候选时将它标为“待确认候选”，不单独暂停确认。
+6. 唯一候选明确包含 `required: true`、`official-download` 的 Clash 且目标机尚未安装时，始终生成同一联网 mini-plan；最小官方端点的目标机直连探测只决定实际 route 和是否必须先启用代理。用户确认该 mini-plan 后只下载、校验并传输匹配目标 OS 和 architecture 的 installer，不安装、不运行，也不处理 profile 中其他软件。`required: false` 不进入本阶段。
+7. Clash 联网完成后执行完整环境预检，展示候选摘要和完整安装计划，用户一次确认 profile、增删项与执行计划；确认前不得安装或修改其他 profile 项目。
+8. 没有有效候选时，报告 validator 的脱敏路径与固定原因。先自动完成只读诊断，再询问用户修复现有文件还是创建空模板。
 
-不得只展示 profile 文件名或软件数量，不得要求用户手工输入已经发现的 profile 路径，也不得根据文件数量自动替用户选择。
+不得只展示 profile 文件名或软件数量，不得要求用户手工输入已经发现的 profile 路径。唯一候选只允许自动进入只读预检和上述 Clash installer 传输，不能自动授权安装或其他修改。
 
 ## 顶层字段
 
@@ -49,6 +50,10 @@ profile 使用 JSON 描述目标机最终需要的软件、非敏感设置和人
 - `required`：可选，默认 `true`。
 
 macOS profile 不得使用 `winget` 或 `microsoft-store`；Windows profile 不得使用 Homebrew 或 Mac App Store 来源。不要直接执行 `name` 或 `package`，先解析为受控安装参数并在计划中展示。
+
+`package` 和 `version` 必须通过 validator 的受控 identifier 规则；不得包含 URL、路径穿越、前导 option、命令插值、shell operator 或控制字符。`manualTasks` 只作为最终检查表展示，绝不执行，也不得包含 URL 或命令。
+
+`required: false` 表示默认不进入 resolved actions。只有用户在完整安装计划中明确选入后才安装；可选代理客户端不得仅因出现在唯一候选 profile 中就提前下载。
 
 `npm-global` 与 `volta-tool` 可跨平台使用，必须提供 `package`。执行前分别验证目标机已有受控 Node.js/npm 或 Volta；缺少的 runtime 必须作为依赖显示在一次性安装计划中，不得静默安装。
 

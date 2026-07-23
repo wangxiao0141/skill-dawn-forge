@@ -2,7 +2,7 @@
 
 ## 目标机 preflight
 
-SSH 建联后只读检查：
+SSH 建联后需要 Clash 联网时，先执行下方“可选 Clash Verge Rev”的最小检查和传输；联网完成后再一次执行本节完整只读检查：
 
 - OS 必须为 Windows；
 - profile `platform` 必须为 `windows`；
@@ -32,11 +32,14 @@ SSH 建联后只读检查：
 
 用户一次确认整个软件集合后：
 
-- 合并可安全批量执行的 Winget 安装；
+- 完整遵循 `references/execution.md`，只运行 `scripts/plan-installation.mjs` 与 `scripts/installation-run.mjs` 的 canonical 入口；内部排程器按依赖、实际官方 endpoint route、权限和 installer 拆分，每批最多 `3` 项；
+- 同一批 Winget package 仍逐项执行并在每项 installer 退出后验证；不得用一个巨型命令或 detached download 等待全部完成；
 - 使用精确 package ID、静默参数和 source agreement 参数；
 - 不执行 profile 外安装，必要依赖除外；新增依赖必须先显示；
 - 不自动卸载、降级或覆盖用户数据；
 - 安装后通过 package receipt、Authenticode、CLI 或应用版本重新验证。
+
+`status`/`observe` 只读本地 run-state，活动期间不重复执行 `winget list`、source refresh、进程名扫描或固定 `Start-Sleep`。Administrator group membership 不代表 SSH token 已 elevated；需要 UAC 的多个动作合并成一个目标机人工步骤，不能从 SSH 中循环尝试提权。
 
 ## 官方 installer
 
@@ -51,9 +54,9 @@ Winget 不适用而使用 `.msi` 或 `.exe` 时：
 
 ## 可选 Clash Verge Rev
 
-仅当 profile 以 `official-download` 明确列出 `Clash Verge Rev` 时处理。未安装时，Agent 在控制机从官方 stable GitHub Release 下载与目标架构匹配的 installer，校验 SHA-256 后通过 `scp` 传到目标机 Downloads 目录；不运行 installer。用户手动安装并处理 UAC。
+唯一匹配候选 profile 以 `required: true`、`official-download` 明确列出 `Clash Verge Rev` 且尚未安装时始终处理；最小官方端点直连探测只决定是否必须先启用代理和记录实际 route。`required: false` 不进入本阶段。SSH `finalizeCommand` 成功后，只检查目标 architecture、Clash Verge Rev 是否已安装、最小直连端点和控制机官方 stable 下载源。未安装时先用 `scripts/plan-installation.mjs network-bootstrap` 发布 bundle，再把 `artifact-request.json` 直接交给 `scripts/artifact-cache.mjs fetch --request`；按 `references/network-bootstrap.md` 的 canonical cache、`.partial` 和单一前台 download owner 规则取得 installer，校验后只通过 `scripts/transfer-artifact.mjs` 传到目标机 `Downloads/dawn-forge/artifacts/`。不先扫描完整应用列表、CLI、PATH、package manager 或所有安装端点。Agent 不运行 installer，用户手动安装并处理 UAC。
 
-Clash Verge Rev 启动后，按 `references/configuration-handoff.md` 把订阅 URL 或其他配置文件传到 `%USERPROFILE%\Downloads\dawn-forge\`；缺少必要配置时先向用户索要。用户手动应用配置并完成 GUI 授权。完成后读取目标机实际系统 proxy/TUN 状态，并验证当前安装计划所需的官方端点。
+下载期间按 `references/configuration-handoff.md` 同时准备订阅或其他配置文件；缺少秘密时让用户在控制机本地运行 `scripts/collect-private-input.mjs`，不得在聊天中索要。installer 通过 Authenticode/publisher 校验后，用户手动安装、启动、应用已传配置并完成 GUI 授权。完成后读取目标机实际系统 proxy/TUN 状态，并验证当前安装计划所需的官方端点。
 
 ## 设置与人工任务
 
