@@ -24,7 +24,7 @@
 
 SSH alias 是建联结果，不是启动前提。没有 alias 时：
 
-1. 从已选 profile 取得目标平台，不重复询问。
+1. 引导用户访问本次要配置的目标电脑；使用已经确认的目标平台，不重复询问。
 2. 引导用户在目标机开启 SSH：
    - macOS：打开 `System Settings > General > Sharing > Remote Login`，只允许目标账号；
    - Windows：安装并启动 OpenSSH Server，确认 `sshd` service 和局域网 firewall rule。
@@ -33,7 +33,9 @@ SSH alias 是建联结果，不是启动前提。没有 alias 时：
    - Windows：`whoami` 与 `hostname`。
 4. 在控制机检查现有 SSH config 和 key。优先复用已知管理身份；没有可用 key 时才请求创建。
 5. 给出目标平台对应的本地步骤，把选定管理公钥幂等加入 `authorized_keys`。
-6. 先用局域网 hostname 完成 public-key-only 回连，再把已验证的 HostName、User 和 IdentityFile 写入稳定 alias。
+6. 先用局域网 hostname 完成 public-key-only 回连。
+7. 回连成功后询问用户希望如何命名这台电脑的稳定 alias；提供一个推荐名称，但必须等待确认。
+8. 把确认后的 alias 与已验证的 HostName、User、IdentityFile 写入控制机 SSH config，再使用 alias 复验。
 
 不要要求用户自己设计 alias、提前提供 IdentityFile，或在尚未开启 SSH 时反复尝试连接。
 
@@ -49,7 +51,7 @@ Host personal-target
   IdentitiesOnly yes
 ```
 
-已有匹配 alias 时复用。需要创建时，优先使用用户给出的名称；否则根据 profile `id` 或已验证 hostname 生成可读名称，先展示最终配置，再写入控制机 SSH config 的 Dawn Forge 标记块。
+已有匹配 alias 时先展示并询问是否用于本次目标。需要创建时，根据用户对目标电脑的称呼和已验证 hostname 提供推荐名称，等待用户确认后再写入控制机 SSH config 的 Dawn Forge 标记块。
 
 执行 `<ssh-executable> -G <target>`，至少核对：
 
