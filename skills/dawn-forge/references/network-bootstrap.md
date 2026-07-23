@@ -14,7 +14,7 @@
 - 控制机能够访问代理客户端的官方发布渠道；
 - 控制机与目标机之间的局域网 SSH、`scp` 和管理身份已验证；
 - 代理客户端使用 `official-download`，不得依赖目标机尚不可用的 package manager；
-- 订阅、账号、password 和 token 只在目标机本地输入。
+- 订阅、账号、password 和 token 由用户在目标机本地输入，或在用户明确授权后按 `references/secret-handoff.md` 通过剪贴板临时交接。
 
 控制机也无法访问官方发布渠道时停止。用户可另行提供从官方渠道取得的安装包，但仍必须验证 release、文件名、architecture、digest 和签名。
 
@@ -26,7 +26,7 @@
 4. publisher 提供 SHA-256 时必须核对；同时计算控制机本地 SHA-256。
 5. 使用已验证的 `scp` 经局域网传到目标机 Downloads 目录。已有同名文件时先比较 SHA-256；不同则停止，不覆盖。
 6. 在目标机重新计算 SHA-256，必须与控制机一致。
-7. 按目标平台验证 code signature 或 Authenticode，再由用户完成 GUI 安装、系统扩展或 UAC 授权、订阅输入和 TUN/系统代理启用。
+7. 按目标平台验证 code signature 或 Authenticode，再由用户完成 GUI 安装、系统扩展或 UAC 授权。需要传递订阅时，按 `references/secret-handoff.md` 把控制机剪贴板经 SSH stdin 写入目标机剪贴板，由用户粘贴、导入并启用 TUN/系统代理。
 8. 读取目标机实际 proxy/TUN、进程和应用身份，并从目标机验证本次计划所需官方端点。
 9. 只有网络门禁通过后，才允许执行剩余联网安装步骤。
 

@@ -40,7 +40,7 @@ https://github.com/clash-verge-rev/clash-verge-rev
 
 - 安装并首次打开；
 - 处理 Gatekeeper、网络扩展、helper 或系统代理授权；
-- 本地输入订阅；
+- 在目标机本地输入订阅，或按 `references/secret-handoff.md` 从控制机剪贴板临时交接后粘贴；
 - 选择节点并启用系统代理或 TUN。
 
 Agent 不读取订阅，不截取 GUI 配置文件，不创建订阅临时文件。
