@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname as systemHostname } from "node:os";
 import { dirname, resolve } from "node:path";
 import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ const publicKeyPath = `${keyPath}.pub`;
 const sshKeygen = options["ssh-keygen"] ?? "ssh-keygen";
 const sshExecutable = options.ssh ?? "ssh";
 const scriptPath = fileURLToPath(import.meta.url);
+const controllerName = controllerIdentityName();
 
 if (!command || options.help || !["key", "plan", "install-key"].includes(command)) {
   printUsage();
@@ -110,7 +111,7 @@ function inspectOrCreateKey(create) {
       "-N",
       "",
       "-C",
-      "dawn-forge-management",
+      controllerName,
     ]);
   } else if (!privateExists || !publicExists) {
     throw new Error("The SSH key pair is incomplete; do not overwrite it.");
@@ -151,6 +152,7 @@ function createPlan() {
     host,
     user,
     alias,
+    controllerName,
     keyCreated: key.created,
     keyFingerprint: key.fingerprint,
     installKeyCommand: buildInstallKeyCommand(platform, host, user),
@@ -172,12 +174,12 @@ function createPlan() {
 function installKey() {
   const key = inspectOrCreateKey(false);
   const { platform, host, user } = targetOptions();
-  const encodedKey = managedKeyBase64();
+  const managedKey = managedKeyPayload();
   const remoteCommand =
     platform === "macos"
-      ? macosAuthorizeCommand(encodedKey)
+      ? macosAuthorizeCommand(managedKey)
       : windowsRemoteCommand(
-          windowsAuthorizeCommand(encodedKey, Boolean(options["windows-admin"])),
+          windowsAuthorizeCommand(managedKey, Boolean(options["windows-admin"])),
         );
 
   const result = spawnSync(
@@ -208,6 +210,7 @@ function installKey() {
     platform,
     host,
     user,
+    controllerName,
     keyFingerprint: key.fingerprint,
   });
 }
@@ -226,12 +229,20 @@ function targetOptions() {
   return { platform, host, user };
 }
 
-function managedKeyBase64() {
+function managedKeyPayload() {
   const publicLine = readFileSync(publicKeyPath, "utf8").trim();
   const [type, blob] = publicLine.split(/\s+/, 2);
-  const managedLine =
-    `no-agent-forwarding,no-port-forwarding,no-X11-forwarding ${type} ${blob} dawn-forge-management`;
-  return Buffer.from(managedLine, "utf8").toString("base64");
+  const managedLine = [
+    "no-agent-forwarding,no-port-forwarding,no-X11-forwarding",
+    type,
+    blob,
+    controllerName,
+  ].join(" ");
+
+  return {
+    encodedLine: Buffer.from(managedLine, "utf8").toString("base64"),
+    blob,
+  };
 }
 
 function buildInstallKeyCommand(platform, host, user) {
@@ -245,6 +256,8 @@ function buildInstallKeyCommand(platform, host, user) {
     host,
     "--user",
     user,
+    "--controller-name",
+    quoteForUserShell(controllerName),
   ];
 
   if (options["windows-admin"]) parts.push("--windows-admin");
@@ -263,6 +276,14 @@ function requiredOption(name) {
   return value;
 }
 
+function controllerIdentityName() {
+  const value = String(options["controller-name"] ?? systemHostname()).trim();
+  if (!value || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error("Cannot determine a safe controller host name.");
+  }
+  return value;
+}
+
 function validHost(host) {
   if (isIP(host)) return true;
   return /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(host);
@@ -278,16 +299,27 @@ function quoteForUserShell(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function macosAuthorizeCommand(encodedKey) {
+function macosAuthorizeCommand({ encodedLine, blob }) {
   return [
-    `KEY="$(printf %s '${encodedKey}' | base64 -D)"`,
-    'umask 077; mkdir -p "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"',
-    'chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"',
-    'grep -qxF "$KEY" "$HOME/.ssh/authorized_keys" || printf \'%s\\n\' "$KEY" >> "$HOME/.ssh/authorized_keys"',
+    "set -e",
+    `KEY="$(printf %s '${encodedLine}' | base64 -D)"`,
+    `BLOB='${blob}'`,
+    "umask 077",
+    'mkdir -p "$HOME/.ssh"',
+    'AUTH="$HOME/.ssh/authorized_keys"',
+    'TMP="$AUTH.dawn-forge.$$"',
+    'trap \'rm -f "$TMP"\' EXIT',
+    'touch "$AUTH"',
+    'chmod 700 "$HOME/.ssh"',
+    'chmod 600 "$AUTH"',
+    "awk -v blob=\"$BLOB\" '{ keep=1; for (i=1; i<=NF; i++) if ($i == blob) keep=0; if (keep) print }' \"$AUTH\" > \"$TMP\"",
+    'printf \'%s\\n\' "$KEY" >> "$TMP"',
+    'mv "$TMP" "$AUTH"',
+    'chmod 600 "$AUTH"',
   ].join("; ");
 }
 
-function windowsAuthorizeCommand(encodedKey, administrator) {
+function windowsAuthorizeCommand({ encodedLine, blob }, administrator) {
   const fileSetup = administrator
     ? "$f=Join-Path $env:ProgramData 'ssh\\administrators_authorized_keys'"
     : "$d=Join-Path $HOME '.ssh'; New-Item -ItemType Directory -Force $d | Out-Null; $f=Join-Path $d 'authorized_keys'";
@@ -297,10 +329,13 @@ function windowsAuthorizeCommand(encodedKey, administrator) {
       "& icacls.exe $f /inheritance:r /grant:r \"${env:USERNAME}:F\" 'SYSTEM:F' | Out-Null";
 
   return [
-    `$k=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedKey}'))`,
+    `$k=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedLine}'))`,
+    `$b='${blob}'`,
     fileSetup,
     "New-Item -ItemType File -Force $f | Out-Null",
-    "if(-not (Select-String -LiteralPath $f -SimpleMatch $k -Quiet)){Add-Content -LiteralPath $f -Value $k -Encoding ascii}",
+    "$lines=@(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)",
+    "$kept=@($lines | Where-Object { -not (($_ -split '\\s+') -contains $b) })",
+    "Set-Content -LiteralPath $f -Value @($kept + $k) -Encoding ascii",
     acl,
   ].join("; ");
 }
@@ -316,7 +351,7 @@ function printJson(value) {
 
 function printUsage() {
   console.log(`Usage:
-  node "${scriptPath}" key [--create] [--key <path>] [--ssh-keygen <path>]
-  node "${scriptPath}" plan --platform <macos|windows> --host <hostname-or-ip> --user <user> --alias <alias> [--windows-admin] [--key <path>] [--ssh <path>]
-  node "${scriptPath}" install-key --platform <macos|windows> --host <hostname-or-ip> --user <user> [--windows-admin] [--key <path>] [--ssh <path>]`);
+  node "${scriptPath}" key [--create] [--key <path>] [--controller-name <name>] [--ssh-keygen <path>]
+  node "${scriptPath}" plan --platform <macos|windows> --host <hostname-or-ip> --user <user> --alias <alias> [--windows-admin] [--key <path>] [--controller-name <name>] [--ssh <path>]
+  node "${scriptPath}" install-key --platform <macos|windows> --host <hostname-or-ip> --user <user> [--windows-admin] [--key <path>] [--controller-name <name>] [--ssh <path>]`);
 }
