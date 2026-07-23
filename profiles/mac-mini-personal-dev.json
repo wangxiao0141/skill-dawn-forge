@@ -185,7 +185,7 @@
     }
   },
   "manualTasks": [
-    "在目标机本地完成 Clash Verge Rev 首次启动、网络扩展授权、订阅输入和系统代理或 TUN 启用。",
+    "使用 Agent 传入的安装包手动安装并启动 Clash Verge Rev，完成网络扩展授权，从 Dawn Forge 配置目录导入订阅并启用系统代理或 TUN。",
     "在目标机本地完成需要 Apple ID、账号登录、许可证或系统扩展授权的软件首次配置。",
     "在目标机本地为新建的 GitHub key 和 general key 选择 passphrase，并完成需要的第三方账户绑定。"
   ]

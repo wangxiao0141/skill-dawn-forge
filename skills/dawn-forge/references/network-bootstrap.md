@@ -1,48 +1,15 @@
 # 离线目标机网络引导
 
-## 触发条件
+目标机没有可用外网时，代理客户端是其余联网安装的前置门禁。
 
-出现任一情况时，在安装 Command Line Tools、Homebrew、Winget package 或其他联网依赖前执行本阶段：
+1. profile 必须把代理客户端声明为 `official-download`。
+2. Agent 在控制机从发布者官方 stable 渠道下载与目标 OS、architecture 匹配的安装包。
+3. 核对 publisher 提供的 digest，并计算控制机本地 SHA-256。
+4. 通过已验证的 `scp` 把安装包传到目标机 Downloads 目录，再核对两端 SHA-256。
+5. Agent 不挂载、不安装、不运行 installer；用户在目标机手动安装并完成 GUI 或系统授权。
+6. 安装并启动后，按 `references/configuration-handoff.md` 一次传入所需配置。
+7. 用户手动应用配置、选择节点并启用系统代理或 TUN。
+8. Agent 验证系统 proxy/TUN 和本次安装计划所需端点。
+9. 联网验证通过后，才执行剩余批量安装。
 
-- 用户明确说明目标机没有可用外网；
-- 目标机无法访问本次计划需要的 GitHub、Homebrew、npm 或发布者官方端点。
-
-只有 profile 已明确列出代理客户端时才能继续。未列出时先修改并重新校验 profile，再重新确认安装计划。
-
-## 前提
-
-- 控制机能够访问代理客户端的官方发布渠道；
-- 控制机与目标机之间的局域网 SSH、`scp` 和管理身份已验证；
-- 代理客户端使用 `official-download`，不得依赖目标机尚不可用的 package manager；
-- 装机所需配置按 `references/configuration-handoff.md` 传到目标机；缺少必要配置时 Agent 主动向用户索要。
-
-控制机也无法访问官方发布渠道时停止。用户可另行提供从官方渠道取得的安装包，但仍必须验证 release、文件名、architecture、digest 和签名。
-
-## 执行顺序
-
-1. 在控制机解析官方 latest stable Release，拒绝 draft、prerelease、Alpha、AutoBuild、fork 和第三方镜像。
-2. 根据目标 OS 与 architecture 选择唯一安装资产；零个或多个匹配都停止。
-3. 下载到控制机的 Dawn Forge artifact cache。记录 release、asset、官方 URL 和公开 digest，不记录代理地址或订阅。
-4. publisher 提供 SHA-256 时必须核对；同时计算控制机本地 SHA-256。
-5. 使用已验证的 `scp` 经局域网传到目标机 Downloads 目录。已有同名文件时先比较 SHA-256；不同则停止，不覆盖。
-6. 在目标机重新计算 SHA-256，必须与控制机一致。
-7. 按目标平台验证 code signature 或 Authenticode，再由用户完成 GUI 安装、系统扩展或 UAC 授权。按 `references/configuration-handoff.md` 把所需配置传到目标机；用户手动应用配置、选择节点并启用 TUN/系统代理。
-8. 读取目标机实际 proxy/TUN、进程和应用身份，并从目标机验证本次计划所需官方端点。
-9. 只有网络门禁通过后，才允许执行剩余联网安装步骤。
-
-本阶段属于同一个一次性安装计划，不额外逐软件确认；只在 GUI、管理员授权和秘密输入时暂停。
-
-Clash Verge Rev 使用 Skill 自带解析器：
-
-```text
-node <skill-directory>/scripts/resolve-clash-verge-release.mjs --platform <macos|windows> --arch <arm64|x64> --download-dir <controller-artifact-cache>
-```
-
-解析器固定官方仓库、要求唯一 stable asset、拒绝不受信任 URL，并在 GitHub 提供 SHA-256 时完成下载校验。不得用 profile 字符串替换仓库或下载 URL。
-
-## 恢复
-
-- artifact 已通过官方 digest 和控制机 SHA-256 验证时可以复用，不重复下载。
-- 上传中断后重新比较两端 SHA-256；不得直接执行部分文件。
-- GUI 安装状态不明时先检查应用、签名、进程和系统扩展，不自动重装。
-- 网络验证失败时保留 artifact，检查所需配置是否已传入，以及用户是否已完成节点选择和 TUN/系统代理授权。
+本阶段只在手动安装、GUI 和系统授权时暂停，不重复确认软件清单。

@@ -53,6 +53,6 @@
   },
   "manualTasks": [
     "按需完成账号登录、系统扩展授权和 GUI 首次配置。",
-    "若安装 Clash Verge Rev，在目标机本地输入订阅并启用系统代理或 TUN。"
+    "若需要 Clash Verge Rev，使用 Agent 传入的安装包手动安装，再从 Dawn Forge 配置目录导入订阅并启用系统代理或 TUN。"
   ]
 }

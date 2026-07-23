@@ -19,31 +19,20 @@ SSH 建联后只读检查：
 
 ## Clash Verge Rev 网络引导
 
-仅当 profile 明确列出 `Clash Verge Rev` 时处理。只使用官方仓库：
+仅当 profile 以 `official-download` 明确列出 `Clash Verge Rev` 时处理。Agent 先检查 `/Applications/Clash Verge.app`、签名和进程：
 
-```text
-https://github.com/clash-verge-rev/clash-verge-rev
-```
+- 未安装时，在控制机从官方 stable GitHub Release 下载与目标架构匹配的安装包，校验 digest 后通过 `scp` 传到 `~/Downloads/`，并核对两端 SHA-256；
+- 已安装时，不重复下载安装包；
+- 目标机没有外网时，完整执行 `references/network-bootstrap.md`。
 
-用户说明目标机离线，或目标机无法访问本次计划所需官方端点时，完整执行 `references/network-bootstrap.md`。必须由控制机下载官方安装包并通过局域网 `scp` 传到目标机；在代理/TUN 联网验证通过前，不运行 `xcode-select --install`、Homebrew 安装或其他联网步骤。
-
-每次执行都核实当前官方 stable Release，不固定历史版本：
-
-1. 排除 Alpha、AutoBuild、fork 和第三方下载站。
-2. 根据目标架构从 release assets 选择唯一的 macOS `aarch64`/`arm64` 或 `x86_64` 安装包。
-3. 要求无凭据 HTTPS URL，并确认最终下载仍来自 GitHub 官方资产域名。
-4. publisher 提供 SHA-256 digest 时必须核对；没有 digest 时明确说明只计算本地 SHA-256 作为传输校验。
-5. 上传前后分别计算 SHA-256，必须一致。
-6. 在目标机挂载或安装前后使用 `codesign --verify --deep --strict` 和 `spctl --assess` 检查 app；失败即停止。
-
-把安装包传到 `~/Downloads/`。已有同名文件时先比较 SHA-256，不覆盖不同内容。由用户在 GUI 中：
+由用户在 GUI 中：
 
 - 安装并首次打开；
 - 处理 Gatekeeper、网络扩展、helper 或系统代理授权；
 - 从 `~/Downloads/dawn-forge/` 读取 Agent 传入的配置并手动导入；
 - 选择节点并启用系统代理或 TUN。
 
-Clash 订阅 URL 作为 `clash-subscription-url.txt` 传入；其他配置文件使用原文件名传入。Agent 不替用户操作 GUI。
+Clash 订阅 URL 作为 `clash-subscription-url.txt` 传入；其他配置文件使用原文件名传入。Agent 不挂载 DMG、不复制 app、不替用户安装 Clash 或操作 GUI。用户安装完成后，Agent 再验证已安装 app 的签名。
 
 完成后读取 `scutil --proxy`、进程和应用 bundle 信息，验证代理真实运行。根据系统代理实际 host/port 为当前下载进程设置临时环境；不要把 proxy URL 写入 profile 或运行状态。至少验证当前安装计划所需的官方端点。
 

@@ -51,9 +51,7 @@ Winget 不适用而使用 `.msi` 或 `.exe` 时：
 
 ## 可选 Clash Verge Rev
 
-仅当 profile 明确列出 `Clash Verge Rev` 时，从官方 stable GitHub Release 选择与目标 architecture 匹配的 Windows asset。验证 release metadata、传输 SHA-256 和 Authenticode 后再运行。
-
-用户说明目标机离线，或目标机无法访问本次计划所需官方端点时，完整执行 `references/network-bootstrap.md`。必须由控制机下载官方 installer 并通过局域网 `scp` 传到目标机 Downloads 目录；在代理/TUN 联网验证通过前，不运行 Winget 或其他联网步骤。
+仅当 profile 以 `official-download` 明确列出 `Clash Verge Rev` 时处理。未安装时，Agent 在控制机从官方 stable GitHub Release 下载与目标架构匹配的 installer，校验 SHA-256 后通过 `scp` 传到目标机 Downloads 目录；不运行 installer。用户手动安装并处理 UAC。
 
 Clash Verge Rev 启动后，按 `references/configuration-handoff.md` 把订阅 URL 或其他配置文件传到 `%USERPROFILE%\Downloads\dawn-forge\`；缺少必要配置时先向用户索要。用户手动应用配置并完成 GUI 授权。完成后读取目标机实际系统 proxy/TUN 状态，并验证当前安装计划所需的官方端点。
 
