@@ -96,7 +96,7 @@ function inspectOrCreateKey(create) {
       exists: false,
       keyPath,
       publicKeyPath,
-      next: "Run the same command with --create after user confirmation.",
+      next: "Run the same command with --create.",
     };
   }
 
@@ -138,12 +138,12 @@ function inspectOrCreateKey(create) {
 }
 
 function createPlan() {
-  const key = inspectOrCreateKey(false);
   const { platform, host, user } = targetOptions();
   const alias = requiredOption("alias");
 
   if (!/^[A-Za-z0-9._-]+$/.test(alias)) throw new Error("--alias contains unsupported characters.");
 
+  const key = inspectOrCreateKey(true);
   const identityFile = portableIdentityFile(keyPath);
 
   return {
@@ -151,6 +151,7 @@ function createPlan() {
     host,
     user,
     alias,
+    keyCreated: key.created,
     keyFingerprint: key.fingerprint,
     installKeyCommand: buildInstallKeyCommand(platform, host, user),
     verifyCommand:
