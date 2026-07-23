@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "id": "personal-mac-mini",
+    "host": "mac-mini.home.arpa",
+    "user": "alice"
+  },
+  "software": [
+    {
+      "name": "Git",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "name": "GitHub CLI",
+      "source": "auto",
+      "package": "gh",
+      "required": true
+    },
+    {
+      "name": "ripgrep",
+      "source": "brew-formula",
+      "package": "ripgrep",
+      "required": true
+    },
+    {
+      "name": "Visual Studio Code",
+      "source": "brew-cask",
+      "package": "visual-studio-code",
+      "required": true
+    },
+    {
+      "name": "Google Chrome",
+      "source": "brew-cask",
+      "package": "google-chrome",
+      "required": false
+    }
+  ],
+  "settings": {
+    "git": {
+      "userName": "Alice",
+      "userEmail": "alice@example.com",
+      "defaultBranch": "main"
+    }
+  },
+  "manualTasks": [
+    "在需要时登录 Mac App Store",
+    "在浏览器中把目标机 GitHub 专用公钥添加到个人 GitHub 账号"
+  ]
+}

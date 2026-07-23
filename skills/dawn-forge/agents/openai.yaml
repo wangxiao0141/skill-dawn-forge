@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dawn Forge"
+  short_description: "通过 SSH 协作配置 Apple Silicon Mac mini"
+  default_prompt: "使用 $dawn-forge 根据装机清单配置我的 Apple Silicon Mac mini。"

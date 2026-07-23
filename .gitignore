@@ -1,0 +1,8 @@
+.agents/
+.dawn-forge/
+node_modules/
+skills-lock.json
+
+.DS_Store
+Thumbs.db
+npm-debug.log*
