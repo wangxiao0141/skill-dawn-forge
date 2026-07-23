@@ -1,4 +1,4 @@
 interface:
   display_name: "Dawn Forge"
   short_description: "通过 SSH 配置 macOS 或 Windows 个人电脑"
-  default_prompt: "使用 $dawn-forge 配置目标电脑；先展示可用 target、profile 及其软件内容让我确认，SSH 未建联时逐步引导开启 SSH、配置公钥、回连并命名稳定 alias。"
+  default_prompt: "使用 $dawn-forge 配置目标电脑；按选择电脑、SSH 建联命名、确认 profile 内容、确认安装计划的顺序逐步引导我，每次只问一个问题。"

@@ -8,16 +8,13 @@ profile 使用 JSON 描述目标机最终需要的软件、非敏感设置和人
 
 ## 发现与选择
 
-1. 用户本次已经明确提供 profile 时直接使用。
-2. 否则检查当前工作区 `profiles/` 下的 JSON 文件，不扫描 Skill 的 `assets/`。
-3. 展示每个候选的：
-   - `id`、`name` 和 `platform`；
-   - 软件名称、`required`、`source` 和 `version` 策略；
-   - `settings` 中会应用的设置；
-   - `manualTasks` 中需要用户完成的事项。
-4. 先确认本次目标电脑和目标平台，再过滤候选并让用户选择。
-5. 明确询问“是否给这台目标电脑使用这个 profile”；即使只有一个匹配候选，也只能标为推荐项，必须等待用户确认。
-6. 没有候选时才复制空模板并询问软件集合。
+1. 先完成目标电脑选择和 SSH 平台探测，再处理 profile。
+2. 检查当前工作区 `profiles/` 下的 JSON 文件，不扫描 Skill 的 `assets/`。
+3. 每个文件都必须运行 `scripts/validate-profile.mjs`；禁止通过 `Get-Content`、正则、字符位置或模型阅读自行判断 JSON 是否有效。
+4. 只使用 validator 输出的 `profileName`、`platform`、`software`、`settings` 和 `manualTasks` 生成候选摘要。
+5. 过滤目标平台不一致的候选，再明确询问“是否给这台目标电脑使用这个 profile”。
+6. 即使只有一个匹配候选，也只能标为推荐项，必须等待用户确认。
+7. 没有有效候选时，报告 validator 的原始错误。先自动完成只读诊断，再询问用户修复现有文件还是创建空模板。
 
 不得只展示 profile 文件名或软件数量，不得要求用户手工输入已经发现的 profile 路径，也不得根据文件数量自动替用户选择。
 
