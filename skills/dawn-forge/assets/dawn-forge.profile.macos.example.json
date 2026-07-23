@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "macos-personal-dev-example",
+  "name": "macOS Personal Development Example",
+  "platform": "macos",
+  "software": [
+    {
+      "id": "homebrew",
+      "name": "Homebrew",
+      "source": "auto",
+      "required": true
+    },
+    {
+      "id": "git",
+      "name": "Git",
+      "source": "brew-formula",
+      "package": "git",
+      "required": true
+    },
+    {
+      "id": "ripgrep",
+      "name": "ripgrep",
+      "source": "brew-formula",
+      "package": "ripgrep",
+      "required": true
+    },
+    {
+      "id": "visual-studio-code",
+      "name": "Visual Studio Code",
+      "source": "brew-cask",
+      "package": "visual-studio-code",
+      "required": true
+    },
+    {
+      "id": "clash-verge-rev",
+      "name": "Clash Verge Rev",
+      "source": "auto",
+      "required": false
+    }
+  ],
+  "settings": {
+    "ssh": {
+      "githubKey": true,
+      "generalKey": false
+    }
+  },
+  "manualTasks": [
+    "按需完成账号登录、系统扩展授权和 GUI 首次配置。",
+    "若安装 Clash Verge Rev，在目标机本地输入订阅并启用系统代理或 TUN。"
+  ]
+}

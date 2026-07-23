@@ -42,7 +42,9 @@ npx.cmd skills@latest add . --list
 使用 $dawn-forge，以 target `personal-target` 和 profile `/path/to/profile.json` 配置目标电脑。
 ```
 
-从 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 复制空 profile 模板。profile 不得保存订阅、password、token 或 private key；示例软件集合不得被当作默认需求。
+从 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 复制空 profile 模板；需要完整参考时查看 [`dawn-forge.profile.macos.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.macos.example.json)。profile 不得保存订阅、password、token 或 private key；示例软件集合不得被当作默认需求。
+
+仓库根目录的 `profiles/` 用于维护仓库所有者自己的真实 profile。它由 Git 管理，但位于可安装 Skill 目录之外，因此不会被 `npx skills` 带到使用者的安装目录。
 
 ## 当前验证边界
 
