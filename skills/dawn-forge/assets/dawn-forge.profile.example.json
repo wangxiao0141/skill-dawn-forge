@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "personal-workstation",
+  "name": "Personal Workstation",
+  "platform": "macos",
+  "software": [],
+  "manualTasks": []
+}

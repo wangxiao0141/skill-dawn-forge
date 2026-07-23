@@ -1,16 +1,16 @@
 # Dawn Forge
 
-`dawn-forge` 是一个可安装的 Agent Skill，用于由控制机上的 Agent 与用户协作，通过局域网 SSH 配置已可正常使用的 Apple Silicon Mac mini。
+`dawn-forge` 是一个可安装的 Agent Skill，用于由 macOS 或 Windows 控制机上的 Agent 与用户协作，通过局域网 SSH 配置已可正常使用的 macOS 或 Windows 个人电脑。
 
 第一版覆盖：
 
 - SSH Remote Login 与长期管理公钥建联；
-- `Clash Verge Rev` 官方安装包准备、校验、传输和人工配置；
-- 声明式装机清单、软件计划和一次确认后的批量安装；
-- 目标机 GitHub 专用密钥与通用 SSH 密钥初始化；
+- 稳定 SSH alias、既有管理身份复用与首次建联；
+- platform-specific profile、软件计划和一次确认后的批量安装；
+- 可选代理客户端、GitHub 专用 key 与通用 SSH key 配置；
 - 状态验证、失败恢复和后续重复执行。
 
-它不安装 macOS、不分区、不处理企业 MDM，也不开放公网 SSH。
+它不安装操作系统、不分区、不处理企业 MDM，也不开放公网 SSH。
 
 ## 安装
 
@@ -36,14 +36,14 @@ npx.cmd skills@latest add . --list
 
 ## 使用
 
-安装后向 Agent 提供装机清单，并调用：
+安装后向 Agent 提供目标 SSH alias 和装机 profile，并调用：
 
 ```text
-使用 $dawn-forge 根据装机清单配置我的 Mac mini。
+使用 $dawn-forge，以 target `personal-target` 和 profile `/path/to/profile.json` 配置目标电脑。
 ```
 
-从 [`dawn-forge.example.json`](./skills/dawn-forge/assets/dawn-forge.example.json) 复制清单模板。清单不得保存 Clash 订阅、password、token 或 private key。
+从 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 复制空 profile 模板。profile 不得保存订阅、password、token 或 private key；示例软件集合不得被当作默认需求。
 
 ## 当前验证边界
 
-仓库会验证 Skill 结构、装机清单校验器和 `npx skills` 发现。真实 Mac mini 的 SSH、GUI、`sudo`、Clash 和软件组合仍需首次端到端装机验证；完成前必须报告为 `not-verified`。
+仓库会验证 Skill 结构、profile 校验器和 `npx skills` 发现。macOS/Windows 控制机到 macOS/Windows 目标机的每种组合必须分别完成真实端到端验证；未验证组合必须报告为 `not-verified`。

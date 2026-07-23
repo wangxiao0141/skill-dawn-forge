@@ -5,9 +5,9 @@
 SSH 建联后只读检查：
 
 - `uname -s` 必须为 `Darwin`；
-- `uname -m` 必须为 `arm64`；
+- `uname -m` 必须为受支持的 `arm64` 或 `x86_64`；
 - `sw_vers` 与 Apple 当前支持范围；
-- 当前账号与装机清单 `target.user`；
+- 当前账号与 `ssh -G <target>` 解析的 `User`；
 - 可用磁盘空间；
 - `xcode-select -p`；
 - `/opt/homebrew/bin/brew`；
@@ -17,9 +17,9 @@ SSH 建联后只读检查：
 
 平台、架构或用户不匹配时停止。不要根据文件是否存在单独断言软件可用。
 
-## Clash Verge Rev
+## 可选 Clash Verge Rev
 
-只使用官方仓库：
+仅当 profile 明确列出 `Clash Verge Rev` 时处理。只使用官方仓库：
 
 ```text
 https://github.com/clash-verge-rev/clash-verge-rev
@@ -28,7 +28,7 @@ https://github.com/clash-verge-rev/clash-verge-rev
 每次执行都核实当前官方 stable Release，不固定历史版本：
 
 1. 排除 Alpha、AutoBuild、fork 和第三方下载站。
-2. 从 release assets 选择唯一的 macOS Apple Silicon（`aarch64`/`arm64`）安装包。
+2. 根据目标架构从 release assets 选择唯一的 macOS `aarch64`/`arm64` 或 `x86_64` 安装包。
 3. 要求无凭据 HTTPS URL，并确认最终下载仍来自 GitHub 官方资产域名。
 4. publisher 提供 SHA-256 digest 时必须核对；没有 digest 时明确说明只计算本地 SHA-256 作为传输校验。
 5. 上传前后分别计算 SHA-256，必须一致。
@@ -43,7 +43,7 @@ https://github.com/clash-verge-rev/clash-verge-rev
 
 Agent 不读取订阅，不截取 GUI 配置文件，不创建订阅临时文件。
 
-完成后读取 `scutil --proxy`、进程和应用 bundle 信息，验证代理真实运行。根据系统代理实际 host/port 为当前下载进程设置临时环境；不要把 proxy URL 写入装机清单或运行状态。至少验证 GitHub Release 和 Homebrew 官方端点。
+完成后读取 `scutil --proxy`、进程和应用 bundle 信息，验证代理真实运行。根据系统代理实际 host/port 为当前下载进程设置临时环境；不要把 proxy URL 写入 profile 或运行状态。至少验证当前安装计划所需的官方端点。
 
 ## Homebrew
 
@@ -59,7 +59,7 @@ Agent 不读取订阅，不截取 GUI 配置文件，不创建订阅临时文件
 
 按以下顺序解析每个软件：
 
-1. 装机清单显式提供的受支持 `source` 和 `package`。
+1. profile 显式提供的受支持 `source` 和 `package`。
 2. `auto` 时优先查找官方 Homebrew formula 或 cask。
 3. Homebrew 不适用时，查找软件发布者的官方 HTTPS 渠道，并验证 macOS code signature。
 4. Mac App Store 软件转为人工登录/安装，除非 `mas` 已可用且用户已批准。
@@ -80,7 +80,7 @@ Agent 不读取订阅，不截取 GUI 配置文件，不创建订阅临时文件
 
 ## 设置与人工任务
 
-- 仅在装机清单提供 `settings.git` 时设置 Git identity。
+- 仅在 profile 提供 `settings.git` 时设置 Git identity。
 - 只修改 Dawn Forge 标记块；已有不同设置视为 `conflict`。
 - Apple ID、App Store、许可证、浏览器账号、系统扩展和 GUI 首选项均为人工任务。
 - 不迁移浏览器资料、聊天记录、数据库、容器数据、项目 secret 或软件许可证。
