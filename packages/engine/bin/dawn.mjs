@@ -9227,12 +9227,12 @@ function verifySnapshot(runId, snapshot, events) {
       );
     }
     if (replayedOutcome) {
-      if (replayedOutcome === "stopped" && item.event.type === "run-started") {
+      if ((replayedOutcome === "stopped" || replayedOutcome === "completed") && item.event.type === "run-started") {
         replayedOutcome = void 0;
         continue;
       }
       throw new JournalConsistencyError(
-        `Run \u5DF2\u8FDB\u5165 ${replayedOutcome}\uFF0C\u53EA\u80FD\u4ECE stopped \u6062\u590D\u3002`
+        `Run \u5DF2\u8FDB\u5165 ${replayedOutcome}\uFF0C\u53EA\u80FD\u901A\u8FC7\u65B0\u7684 run-started \u6062\u590D\u3002`
       );
     }
     if (waitingForCriticalStop && item.event.type !== "run-stopped") {
@@ -9263,7 +9263,13 @@ function verifySnapshot(runId, snapshot, events) {
         waitingForCriticalStop = item.event.critical;
         break;
       case "action-blocked":
-        transition(item.event.actionId, "blocked", ["pending"]);
+        transition(item.event.actionId, "blocked", [
+          "pending",
+          "failed",
+          "blocked",
+          "succeeded",
+          "needs_user"
+        ]);
         break;
       case "needs-user":
         transition(item.event.actionId, "needs_user", [
@@ -10338,6 +10344,347 @@ async function executePlan(options) {
     journal.close();
   }
 }
+function readStoredPlan(runId, runsDirectory) {
+  const { snapshot } = readRun(runId, { runsDirectory });
+  const planPath = join3(runsDirectory, runId, "plan.json");
+  const stat = lstatSync2(planPath);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new PlanApprovalError("Run \u7684 Plan \u5FC5\u987B\u662F regular file\u3002");
+  }
+  let value;
+  try {
+    value = JSON.parse(readFileSync3(planPath, "utf8"));
+  } catch {
+    throw new PlanApprovalError("Run \u7684 Plan \u4E0D\u662F\u5408\u6CD5 JSON\u3002");
+  }
+  const plan = parsePlan(value);
+  if (computePlanHash(plan.spec) !== plan.planHash || plan.planHash !== snapshot.planHash) {
+    throw new PlanApprovalError("Run \u7684 Plan \u4E0E snapshot hash \u4E0D\u5339\u914D\u3002");
+  }
+  return { plan, snapshot };
+}
+function readRunPlan(runId, runsDirectory = join3(homedir2(), ".dawn-forge", "runs")) {
+  return readStoredPlan(runId, runsDirectory).plan;
+}
+async function resumeRun(options) {
+  const runsDirectory = options.runsDirectory ?? join3(homedir2(), ".dawn-forge", "runs");
+  readStoredPlan(options.runId, runsDirectory);
+  const journal = openJournal(options.runId, { runsDirectory });
+  const now = options.now ?? (() => /* @__PURE__ */ new Date());
+  const events = [];
+  try {
+    const { plan, snapshot: storedSnapshot } = readStoredPlan(
+      options.runId,
+      runsDirectory
+    );
+    const states = new Map(
+      storedSnapshot.actions.map((action) => [action.actionId, action.state])
+    );
+    const timestamps = new Map(
+      storedSnapshot.actions.map((action) => [
+        action.actionId,
+        {
+          ...action.startedAt ? { startedAt: action.startedAt } : {},
+          ...action.finishedAt ? { finishedAt: action.finishedAt } : {},
+          ...action.error ? { error: action.error } : {}
+        }
+      ])
+    );
+    let outcome = "in-progress";
+    const snapshot = () => ({
+      schemaVersion: 1,
+      runId: options.runId,
+      planHash: plan.planHash,
+      createdAt: storedSnapshot.createdAt,
+      updatedAt: now().toISOString(),
+      actions: plan.spec.actions.map((action) => ({
+        actionId: action.actionId,
+        state: states.get(action.actionId) ?? "pending",
+        ...timestamps.get(action.actionId)
+      })),
+      outcome
+    });
+    const makeEvent = (event) => ({
+      timestamp: now().toISOString(),
+      runId: options.runId,
+      event
+    });
+    const commit = async (values) => {
+      const list = Array.isArray(values) ? values : [values];
+      await journal.commit(list, snapshot());
+      for (const event of list) {
+        events.push(event);
+        options.emit?.(event);
+      }
+    };
+    const blockDescendants = (action, finishedAt) => {
+      const blockedEvents = [];
+      for (const blockedId of descendants(
+        action.actionId,
+        plan.spec.actions
+      )) {
+        const state = states.get(blockedId);
+        if (state === "running" || state === void 0) {
+          continue;
+        }
+        states.set(blockedId, "blocked");
+        timestamps.set(blockedId, {
+          finishedAt,
+          error: `\u4F9D\u8D56 ${action.actionId} \u5931\u8D25\u3002`
+        });
+        blockedEvents.push(
+          makeEvent({
+            type: "action-blocked",
+            actionId: blockedId,
+            reason: `\u4F9D\u8D56 ${action.actionId} \u5931\u8D25\u3002`
+          })
+        );
+      }
+      return blockedEvents;
+    };
+    const failAction = async (action, error, stopReason) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const finishedAt = now().toISOString();
+      const previous = timestamps.get(action.actionId);
+      states.set(action.actionId, "failed");
+      timestamps.set(action.actionId, {
+        ...previous?.startedAt ? { startedAt: previous.startedAt } : {},
+        finishedAt,
+        error: message
+      });
+      const failure = makeEvent({
+        type: "action-failed",
+        actionId: action.actionId,
+        message,
+        critical: action.critical
+      });
+      if (action.critical || stopReason !== void 0) {
+        const blockedEvents = action.critical ? [] : blockDescendants(action, finishedAt);
+        outcome = "stopped";
+        await commit([
+          failure,
+          ...blockedEvents,
+          makeEvent({
+            type: "run-stopped",
+            reason: stopReason ?? `\u5173\u952E Action ${action.actionId} \u5931\u8D25\u3002`
+          })
+        ]);
+        return true;
+      }
+      await commit([failure, ...blockDescendants(action, finishedAt)]);
+      return false;
+    };
+    await commit(makeEvent({ type: "run-started" }));
+    for (const action of plan.spec.actions) {
+      if (states.get(action.actionId) !== "running") {
+        continue;
+      }
+      if (await failAction(
+        action,
+        new Error("\u4E0A\u6B21\u8FDB\u7A0B\u4E2D\u65AD\u65F6 Action \u4ECD\u5904\u4E8E running\u3002"),
+        `Action ${action.actionId} \u7684\u539F SSH/\u8FDC\u7AEF\u8FDB\u7A0B\u72B6\u6001\u65E0\u6CD5\u786E\u8BA4\uFF1B\u8BF7\u5148\u5728\u76EE\u6807\u673A\u786E\u8BA4\u65E0\u9057\u7559\u5B89\u88C5\u8FDB\u7A0B\uFF0C\u518D\u6B21\u8FD0\u884C dawn resume\u3002`
+      )) {
+        return {
+          runId: options.runId,
+          exitCode: ExitCode.ActionFailed,
+          events
+        };
+      }
+    }
+    for (const action of plan.spec.actions) {
+      if (states.get(action.actionId) !== "succeeded") {
+        continue;
+      }
+      let verifyError;
+      try {
+        await getProvider(action.provider).verify(action.params, options.ssh);
+      } catch (error) {
+        verifyError = error;
+      }
+      if (verifyError === void 0) {
+        timestamps.set(action.actionId, {
+          ...timestamps.get(action.actionId),
+          finishedAt: now().toISOString(),
+          error: void 0
+        });
+        await commit(
+          makeEvent({
+            type: "action-succeeded",
+            actionId: action.actionId,
+            message: `${action.packageId} \u91CD\u65B0\u9A8C\u8BC1\u901A\u8FC7\u3002`
+          })
+        );
+        continue;
+      }
+      if (await failAction(action, verifyError)) {
+        return {
+          runId: options.runId,
+          exitCode: ExitCode.ActionFailed,
+          events
+        };
+      }
+    }
+    for (const action of plan.spec.actions) {
+      if (states.get(action.actionId) !== "needs_user") {
+        continue;
+      }
+      let verifyError;
+      try {
+        await getProvider(action.provider).verify(action.params, options.ssh);
+      } catch (error) {
+        verifyError = error;
+      }
+      if (verifyError !== void 0) {
+        await commit(
+          makeEvent({
+            type: "needs-user",
+            actionId: action.actionId,
+            instruction: `\u8BF7\u624B\u52A8\u5B8C\u6210 ${action.packageId} \u540E\u518D\u6B21\u8FD0\u884C dawn resume\u3002`
+          })
+        );
+        return {
+          runId: options.runId,
+          exitCode: ExitCode.NeedsUser,
+          events
+        };
+      }
+      states.set(action.actionId, "succeeded");
+      timestamps.set(action.actionId, {
+        ...timestamps.get(action.actionId),
+        finishedAt: now().toISOString(),
+        error: void 0
+      });
+      await commit(
+        makeEvent({
+          type: "action-succeeded",
+          actionId: action.actionId,
+          message: `${action.packageId} \u624B\u52A8\u6B65\u9AA4\u5DF2\u9A8C\u8BC1\u3002`
+        })
+      );
+    }
+    const attempted = /* @__PURE__ */ new Set();
+    while (true) {
+      const action = plan.spec.actions.find((candidate) => {
+        const state = states.get(candidate.actionId);
+        return !attempted.has(candidate.actionId) && (state === "pending" || state === "failed" || state === "blocked") && candidate.dependsOn.every(
+          (dependency) => states.get(dependency) === "succeeded"
+        );
+      });
+      if (!action) {
+        break;
+      }
+      attempted.add(action.actionId);
+      const startedAt = now().toISOString();
+      states.set(action.actionId, "running");
+      timestamps.set(action.actionId, { startedAt });
+      await commit(
+        makeEvent({
+          type: "action-started",
+          actionId: action.actionId,
+          message: `\u6062\u590D\u5904\u7406 ${action.packageId}`
+        })
+      );
+      if (action.type === "manual") {
+        states.set(action.actionId, "needs_user");
+        await commit(
+          makeEvent({
+            type: "needs-user",
+            actionId: action.actionId,
+            instruction: `\u8BF7\u624B\u52A8\u5B8C\u6210 ${action.packageId} \u540E\u518D\u6B21\u8FD0\u884C dawn resume\u3002`
+          })
+        );
+        return {
+          runId: options.runId,
+          exitCode: ExitCode.NeedsUser,
+          events
+        };
+      }
+      let operationError;
+      let wasAlreadyInstalled = false;
+      try {
+        if (action.type === "conflict") {
+          throw new Error(`${action.packageId} \u5B58\u5728\u65E0\u6CD5\u81EA\u52A8\u5904\u7406\u7684\u51B2\u7A81\u3002`);
+        }
+        const provider = getProvider(action.provider);
+        const check = await provider.check(action.params, options.ssh);
+        wasAlreadyInstalled = check.installed;
+        if (!check.installed) {
+          if (action.type === "skip") {
+            throw new Error(`${action.packageId} \u4E0D\u518D\u6EE1\u8DB3 skip \u6761\u4EF6\u3002`);
+          }
+          await provider.apply(action.params, options.ssh);
+          await provider.verify(action.params, options.ssh);
+        }
+      } catch (error) {
+        operationError = error;
+      }
+      if (operationError !== void 0) {
+        if (await failAction(action, operationError)) {
+          return {
+            runId: options.runId,
+            exitCode: ExitCode.ActionFailed,
+            events
+          };
+        }
+        continue;
+      }
+      states.set(action.actionId, "succeeded");
+      timestamps.set(action.actionId, {
+        startedAt,
+        finishedAt: now().toISOString()
+      });
+      await commit(
+        makeEvent({
+          type: "action-succeeded",
+          actionId: action.actionId,
+          message: wasAlreadyInstalled ? `${action.packageId} \u5DF2\u6EE1\u8DB3\uFF0C\u65E0\u9700\u4FEE\u6539\u3002` : `${action.packageId} \u5DF2\u5B89\u88C5\u5E76\u9A8C\u8BC1\u3002`
+        })
+      );
+    }
+    const hasFailure = [...states.values()].some(
+      (state) => state === "failed" || state === "blocked" || state === "pending" || state === "running"
+    );
+    outcome = "completed";
+    await commit(
+      makeEvent({
+        type: "run-completed",
+        summary: hasFailure ? "Run \u6062\u590D\u5B8C\u6210\uFF0C\u4F46\u4ECD\u5B58\u5728\u90E8\u5206\u5931\u8D25\u3002" : "Run \u6062\u590D\u6210\u529F\u5B8C\u6210\u3002"
+      })
+    );
+    return {
+      runId: options.runId,
+      exitCode: hasFailure ? ExitCode.ActionFailed : ExitCode.Success,
+      events
+    };
+  } finally {
+    journal.close();
+  }
+}
+async function verifyRun(options) {
+  const runsDirectory = options.runsDirectory ?? join3(homedir2(), ".dawn-forge", "runs");
+  const { plan, snapshot } = readStoredPlan(options.runId, runsDirectory);
+  const states = new Map(
+    snapshot.actions.map((action) => [action.actionId, action.state])
+  );
+  const drift = [];
+  for (const action of plan.spec.actions) {
+    if (states.get(action.actionId) !== "succeeded") {
+      continue;
+    }
+    try {
+      await getProvider(action.provider).verify(action.params, options.ssh);
+    } catch (error) {
+      drift.push({
+        actionId: action.actionId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  return {
+    exitCode: drift.length > 0 ? ExitCode.VerifyDrift : ExitCode.Success,
+    drift
+  };
+}
 
 // src/target/index.ts
 var import_proper_lockfile2 = __toESM(require_proper_lockfile(), 1);
@@ -11396,8 +11743,8 @@ var usage = `\u7528\u6CD5\uFF1Adawn <command>
   plan --target <id> --profile <path> --out <path>
   apply --plan <path> --approve <sha256> [--format jsonl]
   run show --run <runId>
-  resume
-  verify`;
+  resume --run <runId> [--format jsonl]
+  verify --run <runId>`;
 var stateMarkers = {
   succeeded: "\u2713",
   skipped: "-",
@@ -11560,20 +11907,20 @@ async function runCli(args, dependencies = {}) {
     if (command.startsWith("target ")) {
       const targetManager = dependencies.targetManager ?? defaultTargetManager(stdout);
       if (command === "target bootstrap") {
-        const options2 = parseOptions(
+        const options3 = parseOptions(
           args.slice(2),
           /* @__PURE__ */ new Set(["--host", "--user", "--name"])
         );
         const target = await targetManager.bootstrap({
-          host: requiredOption(options2, "--host"),
-          user: requiredOption(options2, "--user"),
-          name: requiredOption(options2, "--name")
+          host: requiredOption(options3, "--host"),
+          user: requiredOption(options3, "--user"),
+          name: requiredOption(options3, "--name")
         });
         stdout(targetSummary(target));
         return ExitCode.Success;
       }
-      const options = parseOptions(args.slice(2), /* @__PURE__ */ new Set(["--target"]));
-      const targetId = requiredOption(options, "--target");
+      const options2 = parseOptions(args.slice(2), /* @__PURE__ */ new Set(["--target"]));
+      const targetId = requiredOption(options2, "--target");
       if (command === "target inspect") {
         stdout(targetSummary(await targetManager.inspect(targetId)));
       } else {
@@ -11583,13 +11930,13 @@ async function runCli(args, dependencies = {}) {
       return ExitCode.Success;
     }
     if (command === "plan") {
-      const options = parseOptions(
+      const options2 = parseOptions(
         args.slice(1),
         /* @__PURE__ */ new Set(["--target", "--profile", "--out"])
       );
-      const targetId = requiredOption(options, "--target");
-      const profilePath = requiredOption(options, "--profile");
-      const outputPath = requiredOption(options, "--out");
+      const targetId = requiredOption(options2, "--target");
+      const profilePath = requiredOption(options2, "--profile");
+      const outputPath = requiredOption(options2, "--out");
       const plan = dependencies.planBuilder ? await dependencies.planBuilder.create({
         targetId,
         profilePath
@@ -11609,21 +11956,21 @@ async function runCli(args, dependencies = {}) {
       return ExitCode.Success;
     }
     if (command === "apply") {
-      const options = parseOptions(
+      const options2 = parseOptions(
         args.slice(1),
         /* @__PURE__ */ new Set(["--plan", "--approve", "--format"])
       );
       const plan = readApprovedPlan(
-        requiredOption(options, "--plan"),
-        requiredOption(options, "--approve")
+        requiredOption(options2, "--plan"),
+        requiredOption(options2, "--approve")
       );
-      const requestedFormat = options.get("--format");
+      const requestedFormat = options2.get("--format");
       if (requestedFormat !== void 0 && requestedFormat !== "jsonl") {
         throw new Error("--format \u4EC5\u652F\u6301 jsonl\u3002");
       }
       const format = requestedFormat === "jsonl" ? "jsonl" : "human";
       const emit = (event) => emitRunEvent(event, format, stdout);
-      const result = dependencies.applyExecutor ? await dependencies.applyExecutor({ plan, emit }) : await (async () => {
+      const result2 = dependencies.applyExecutor ? await dependencies.applyExecutor({ plan, emit }) : await (async () => {
         const homeDirectory = homedir4();
         const manager = dependencies.targetManager ?? defaultTargetManager(stdout);
         const applyToTarget = async (target) => {
@@ -11647,10 +11994,81 @@ async function runCli(args, dependencies = {}) {
         };
         return manager.withVerifiedTarget ? manager.withVerifiedTarget(plan.spec.targetId, applyToTarget) : applyToTarget(await manager.inspect(plan.spec.targetId));
       })();
-      return result.exitCode;
+      return result2.exitCode;
     }
-    stderr(`\u5C1A\u672A\u5B9E\u73B0\uFF1A${command}`);
-    return ExitCode.ParamError;
+    if (command === "resume") {
+      const options2 = parseOptions(
+        args.slice(1),
+        /* @__PURE__ */ new Set(["--run", "--format"])
+      );
+      const runId2 = requiredOption(options2, "--run");
+      const requestedFormat = options2.get("--format");
+      if (requestedFormat !== void 0 && requestedFormat !== "jsonl") {
+        throw new Error("--format \u4EC5\u652F\u6301 jsonl\u3002");
+      }
+      const format = requestedFormat === "jsonl" ? "jsonl" : "human";
+      const emit = (event) => emitRunEvent(event, format, stdout);
+      const result2 = dependencies.resumeExecutor ? await dependencies.resumeExecutor({ runId: runId2, emit }) : await (async () => {
+        const plan = readRunPlan(runId2);
+        const homeDirectory = homedir4();
+        const manager = dependencies.targetManager ?? defaultTargetManager(stdout);
+        const resumeTarget = async (target) => {
+          if (target.targetFingerprint !== plan.spec.targetFingerprint) {
+            throw new IdentityConflictError(["targetFingerprint"]);
+          }
+          return resumeRun({
+            runId: runId2,
+            ssh: new NodeProviderSshExecutor(
+              join5(
+                homeDirectory,
+                ".dawn-forge",
+                "targets",
+                target.targetId,
+                "ssh_config"
+              ),
+              target.locators.sshAlias
+            ),
+            emit
+          });
+        };
+        return manager.withVerifiedTarget ? manager.withVerifiedTarget(plan.spec.targetId, resumeTarget) : resumeTarget(await manager.inspect(plan.spec.targetId));
+      })();
+      return result2.exitCode;
+    }
+    const options = parseOptions(args.slice(1), /* @__PURE__ */ new Set(["--run"]));
+    const runId = requiredOption(options, "--run");
+    const result = dependencies.verifyExecutor ? await dependencies.verifyExecutor({ runId }) : await (async () => {
+      const plan = readRunPlan(runId);
+      const homeDirectory = homedir4();
+      const manager = dependencies.targetManager ?? defaultTargetManager(stdout);
+      const verifyTarget = async (target) => {
+        if (target.targetFingerprint !== plan.spec.targetFingerprint) {
+          throw new IdentityConflictError(["targetFingerprint"]);
+        }
+        return verifyRun({
+          runId,
+          ssh: new NodeProviderSshExecutor(
+            join5(
+              homeDirectory,
+              ".dawn-forge",
+              "targets",
+              target.targetId,
+              "ssh_config"
+            ),
+            target.locators.sshAlias
+          )
+        });
+      };
+      return manager.withVerifiedTarget ? manager.withVerifiedTarget(plan.spec.targetId, verifyTarget) : verifyTarget(await manager.inspect(plan.spec.targetId));
+    })();
+    if (result.drift.length === 0) {
+      stdout(`Run ${runId} verify \u901A\u8FC7\u3002`);
+    } else {
+      for (const drift of result.drift) {
+        stdout(`${drift.actionId}: ${drift.message}`);
+      }
+    }
+    return result.exitCode;
   } catch (error) {
     if (error instanceof Error && "exitCode" in error && typeof error.exitCode === "number") {
       stderr(error.message);

@@ -608,12 +608,16 @@ function verifySnapshot(
     }
 
     if (replayedOutcome) {
-      if (replayedOutcome === "stopped" && item.event.type === "run-started") {
+      if (
+        (replayedOutcome === "stopped" ||
+          replayedOutcome === "completed") &&
+        item.event.type === "run-started"
+      ) {
         replayedOutcome = undefined;
         continue;
       }
       throw new JournalConsistencyError(
-        `Run 已进入 ${replayedOutcome}，只能从 stopped 恢复。`,
+        `Run 已进入 ${replayedOutcome}，只能通过新的 run-started 恢复。`,
       );
     }
     if (waitingForCriticalStop && item.event.type !== "run-stopped") {
@@ -645,7 +649,13 @@ function verifySnapshot(
         waitingForCriticalStop = item.event.critical;
         break;
       case "action-blocked":
-        transition(item.event.actionId, "blocked", ["pending"]);
+        transition(item.event.actionId, "blocked", [
+          "pending",
+          "failed",
+          "blocked",
+          "succeeded",
+          "needs_user",
+        ]);
         break;
       case "needs-user":
         transition(item.event.actionId, "needs_user", [

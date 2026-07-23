@@ -70,11 +70,7 @@ test("dawn --help 列出全部 V1 子命令并以 0 退出", () => {
   }
 });
 
-test("尚未实现和未知的命令给出明确说明并以 2 退出", () => {
-  const unimplemented = runDawn(["resume"]);
-  assert.equal(unimplemented.status, 2);
-  assert.match(unimplemented.stderr, /尚未实现：resume/);
-
+test("未知的命令给出明确说明并以 2 退出", () => {
   const unknown = runDawn(["unknown"]);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /未知命令：unknown/);
@@ -180,6 +176,53 @@ test("dawn apply --format jsonl 每个事件输出一行并包含 runId", async 
     assert.deepEqual(output.map((line) => JSON.parse(line)), events);
     assert.equal(JSON.parse(output[0]).runId, "run-jsonl");
   });
+});
+
+test("dawn resume 透传 JSONL 事件和退出码", async () => {
+  const output: string[] = [];
+  const event: RunEvent = {
+    timestamp: "2026-07-23T13:00:00.000Z",
+    runId: "run-resume",
+    event: { type: "run-started" },
+  };
+
+  const exitCode = await runCli(
+    ["resume", "--run", "run-resume", "--format", "jsonl"],
+    {
+      async resumeExecutor({ runId, emit }) {
+        assert.equal(runId, "run-resume");
+        emit(event);
+        return { runId, exitCode: 10, events: [event] };
+      },
+      stdout: (message) => output.push(message),
+      stderr: (message) => output.push(`error:${message}`),
+    },
+  );
+
+  assert.equal(exitCode, 10);
+  assert.deepEqual(output.map((line) => JSON.parse(line)), [event]);
+});
+
+test("dawn verify 报告 drift 并透传退出码 50", async () => {
+  const output: string[] = [];
+
+  const exitCode = await runCli(
+    ["verify", "--run", "run-drift"],
+    {
+      async verifyExecutor({ runId }) {
+        assert.equal(runId, "run-drift");
+        return {
+          exitCode: 50,
+          drift: [{ actionId: "action-node", message: "node is missing" }],
+        };
+      },
+      stdout: (message) => output.push(message),
+      stderr: (message) => output.push(`error:${message}`),
+    },
+  );
+
+  assert.equal(exitCode, 50);
+  assert.deepEqual(output, ["action-node: node is missing"]);
 });
 
 test("dawn plan 写出 Plan JSON 并打印 planHash", async () => {

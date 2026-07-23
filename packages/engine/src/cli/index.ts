@@ -8,7 +8,11 @@ import {
   executePlan,
   NodeProviderSshExecutor,
   readApprovedPlan,
+  readRunPlan,
+  resumeRun,
+  verifyRun,
   type ExecutePlanResult,
+  type VerifyRunResult,
 } from "../executor/index.ts";
 import { readRun } from "../journal/index.ts";
 import {
@@ -38,8 +42,8 @@ const usage = `用法：dawn <command>
   plan --target <id> --profile <path> --out <path>
   apply --plan <path> --approve <sha256> [--format jsonl]
   run show --run <runId>
-  resume
-  verify`;
+  resume --run <runId> [--format jsonl]
+  verify --run <runId>`;
 
 const stateMarkers: Record<ActionState, string> = {
   succeeded: "✓",
@@ -73,6 +77,13 @@ interface CliDependencies {
     readonly plan: Plan;
     readonly emit: (event: RunEvent) => void;
   }) => Promise<ExecutePlanResult>;
+  readonly resumeExecutor?: (input: {
+    readonly runId: string;
+    readonly emit: (event: RunEvent) => void;
+  }) => Promise<ExecutePlanResult>;
+  readonly verifyExecutor?: (input: {
+    readonly runId: string;
+  }) => Promise<VerifyRunResult>;
   readonly stdout?: (message: string) => void;
   readonly stderr?: (message: string) => void;
 }
@@ -383,8 +394,90 @@ export async function runCli(
       return result.exitCode;
     }
 
-    stderr(`尚未实现：${command}`);
-    return ExitCode.ParamError;
+    if (command === "resume") {
+      const options = parseOptions(
+        args.slice(1),
+        new Set(["--run", "--format"]),
+      );
+      const runId = requiredOption(options, "--run");
+      const requestedFormat = options.get("--format");
+      if (requestedFormat !== undefined && requestedFormat !== "jsonl") {
+        throw new Error("--format 仅支持 jsonl。");
+      }
+      const format = requestedFormat === "jsonl" ? "jsonl" : "human";
+      const emit = (event: RunEvent) => emitRunEvent(event, format, stdout);
+      const result = dependencies.resumeExecutor
+        ? await dependencies.resumeExecutor({ runId, emit })
+        : await (async () => {
+            const plan = readRunPlan(runId);
+            const homeDirectory = homedir();
+            const manager =
+              dependencies.targetManager ?? defaultTargetManager(stdout);
+            const resumeTarget = async (target: Target) => {
+              if (target.targetFingerprint !== plan.spec.targetFingerprint) {
+                throw new IdentityConflictError(["targetFingerprint"]);
+              }
+              return resumeRun({
+                runId,
+                ssh: new NodeProviderSshExecutor(
+                  join(
+                    homeDirectory,
+                    ".dawn-forge",
+                    "targets",
+                    target.targetId,
+                    "ssh_config",
+                  ),
+                  target.locators.sshAlias,
+                ),
+                emit,
+              });
+            };
+            return manager.withVerifiedTarget
+              ? manager.withVerifiedTarget(plan.spec.targetId, resumeTarget)
+              : resumeTarget(await manager.inspect(plan.spec.targetId));
+          })();
+      return result.exitCode;
+    }
+
+    const options = parseOptions(args.slice(1), new Set(["--run"]));
+    const runId = requiredOption(options, "--run");
+    const result = dependencies.verifyExecutor
+      ? await dependencies.verifyExecutor({ runId })
+      : await (async () => {
+          const plan = readRunPlan(runId);
+          const homeDirectory = homedir();
+          const manager =
+            dependencies.targetManager ?? defaultTargetManager(stdout);
+          const verifyTarget = async (target: Target) => {
+            if (target.targetFingerprint !== plan.spec.targetFingerprint) {
+              throw new IdentityConflictError(["targetFingerprint"]);
+            }
+            return verifyRun({
+              runId,
+              ssh: new NodeProviderSshExecutor(
+                join(
+                  homeDirectory,
+                  ".dawn-forge",
+                  "targets",
+                  target.targetId,
+                  "ssh_config",
+                ),
+                target.locators.sshAlias,
+              ),
+            });
+          };
+          return manager.withVerifiedTarget
+            ? manager.withVerifiedTarget(plan.spec.targetId, verifyTarget)
+            : verifyTarget(await manager.inspect(plan.spec.targetId));
+        })();
+    if (result.drift.length === 0) {
+      stdout(`Run ${runId} verify 通过。`);
+    } else {
+      for (const drift of result.drift) {
+        stdout(`${drift.actionId}: ${drift.message}`);
+      }
+    }
+    return result.exitCode;
   } catch (error) {
     if (
       error instanceof Error &&

@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   openJournal,
+  readRun,
   type RunSnapshot,
 } from "../journal/index.ts";
 import { getProvider } from "../providers/index.ts";
@@ -458,4 +459,427 @@ export async function executePlan(
   } finally {
     journal.close();
   }
+}
+
+interface ResumeRunOptions {
+  readonly runId: string;
+  readonly ssh: SshExecutor;
+  readonly runsDirectory?: string;
+  readonly now?: () => Date;
+  readonly emit?: (event: RunEvent) => void;
+}
+
+export interface VerifyRunResult {
+  readonly exitCode: number;
+  readonly drift: readonly {
+    readonly actionId: string;
+    readonly message: string;
+  }[];
+}
+
+function readStoredPlan(
+  runId: string,
+  runsDirectory: string,
+): { plan: Plan; snapshot: RunSnapshot } {
+  const { snapshot } = readRun(runId, { runsDirectory });
+  const planPath = join(runsDirectory, runId, "plan.json");
+  const stat = lstatSync(planPath);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new PlanApprovalError("Run 的 Plan 必须是 regular file。");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(planPath, "utf8"));
+  } catch {
+    throw new PlanApprovalError("Run 的 Plan 不是合法 JSON。");
+  }
+  const plan = parsePlan(value);
+  if (
+    computePlanHash(plan.spec) !== plan.planHash ||
+    plan.planHash !== snapshot.planHash
+  ) {
+    throw new PlanApprovalError("Run 的 Plan 与 snapshot hash 不匹配。");
+  }
+  return { plan, snapshot };
+}
+
+export function readRunPlan(
+  runId: string,
+  runsDirectory = join(homedir(), ".dawn-forge", "runs"),
+): Plan {
+  return readStoredPlan(runId, runsDirectory).plan;
+}
+
+export async function resumeRun(
+  options: ResumeRunOptions,
+): Promise<ExecutePlanResult> {
+  const runsDirectory =
+    options.runsDirectory ?? join(homedir(), ".dawn-forge", "runs");
+  readStoredPlan(options.runId, runsDirectory);
+  const journal = openJournal(options.runId, { runsDirectory });
+  const now = options.now ?? (() => new Date());
+  const events: RunEvent[] = [];
+
+  try {
+    const { plan, snapshot: storedSnapshot } = readStoredPlan(
+      options.runId,
+      runsDirectory,
+    );
+    const states = new Map<string, ActionState>(
+      storedSnapshot.actions.map((action) => [action.actionId, action.state]),
+    );
+    const timestamps = new Map(
+      storedSnapshot.actions.map((action) => [
+        action.actionId,
+        {
+          ...(action.startedAt ? { startedAt: action.startedAt } : {}),
+          ...(action.finishedAt ? { finishedAt: action.finishedAt } : {}),
+          ...(action.error ? { error: action.error } : {}),
+        },
+      ]),
+    );
+    let outcome: RunSnapshot["outcome"] = "in-progress";
+    const snapshot = (): RunSnapshot => ({
+      schemaVersion: 1,
+      runId: options.runId,
+      planHash: plan.planHash,
+      createdAt: storedSnapshot.createdAt,
+      updatedAt: now().toISOString(),
+      actions: plan.spec.actions.map((action) => ({
+        actionId: action.actionId,
+        state: states.get(action.actionId) ?? "pending",
+        ...timestamps.get(action.actionId),
+      })),
+      outcome,
+    });
+    const makeEvent = (event: RunEvent["event"]): RunEvent => ({
+      timestamp: now().toISOString(),
+      runId: options.runId,
+      event,
+    });
+    const commit = async (
+      values: RunEvent | readonly RunEvent[],
+    ): Promise<void> => {
+      const list = Array.isArray(values) ? values : [values];
+      await journal.commit(list, snapshot());
+      for (const event of list) {
+        events.push(event);
+        options.emit?.(event);
+      }
+    };
+    const blockDescendants = (
+      action: Action,
+      finishedAt: string,
+    ): RunEvent[] => {
+      const blockedEvents: RunEvent[] = [];
+      for (const blockedId of descendants(
+        action.actionId,
+        plan.spec.actions,
+      )) {
+        const state = states.get(blockedId);
+        if (state === "running" || state === undefined) {
+          continue;
+        }
+        states.set(blockedId, "blocked");
+        timestamps.set(blockedId, {
+          finishedAt,
+          error: `依赖 ${action.actionId} 失败。`,
+        });
+        blockedEvents.push(
+          makeEvent({
+            type: "action-blocked",
+            actionId: blockedId,
+            reason: `依赖 ${action.actionId} 失败。`,
+          }),
+        );
+      }
+      return blockedEvents;
+    };
+    const failAction = async (
+      action: Action,
+      error: unknown,
+      stopReason?: string,
+    ): Promise<boolean> => {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      const finishedAt = now().toISOString();
+      const previous = timestamps.get(action.actionId);
+      states.set(action.actionId, "failed");
+      timestamps.set(action.actionId, {
+        ...(previous?.startedAt
+          ? { startedAt: previous.startedAt }
+          : {}),
+        finishedAt,
+        error: message,
+      });
+      const failure = makeEvent({
+        type: "action-failed",
+        actionId: action.actionId,
+        message,
+        critical: action.critical,
+      });
+      if (action.critical || stopReason !== undefined) {
+        const blockedEvents = action.critical
+          ? []
+          : blockDescendants(action, finishedAt);
+        outcome = "stopped";
+        await commit([
+          failure,
+          ...blockedEvents,
+          makeEvent({
+            type: "run-stopped",
+            reason:
+              stopReason ?? `关键 Action ${action.actionId} 失败。`,
+          }),
+        ]);
+        return true;
+      }
+      await commit([failure, ...blockDescendants(action, finishedAt)]);
+      return false;
+    };
+
+    await commit(makeEvent({ type: "run-started" }));
+
+    for (const action of plan.spec.actions) {
+      if (states.get(action.actionId) !== "running") {
+        continue;
+      }
+      if (
+        await failAction(
+          action,
+          new Error("上次进程中断时 Action 仍处于 running。"),
+          `Action ${action.actionId} 的原 SSH/远端进程状态无法确认；请先在目标机确认无遗留安装进程，再次运行 dawn resume。`,
+        )
+      ) {
+        return {
+          runId: options.runId,
+          exitCode: ExitCode.ActionFailed,
+          events,
+        };
+      }
+    }
+
+    for (const action of plan.spec.actions) {
+      if (states.get(action.actionId) !== "succeeded") {
+        continue;
+      }
+      let verifyError: unknown;
+      try {
+        await getProvider(action.provider).verify(action.params, options.ssh);
+      } catch (error) {
+        verifyError = error;
+      }
+      if (verifyError === undefined) {
+        timestamps.set(action.actionId, {
+          ...timestamps.get(action.actionId),
+          finishedAt: now().toISOString(),
+          error: undefined,
+        });
+        await commit(
+          makeEvent({
+            type: "action-succeeded",
+            actionId: action.actionId,
+            message: `${action.packageId} 重新验证通过。`,
+          }),
+        );
+        continue;
+      }
+      if (await failAction(action, verifyError)) {
+        return {
+          runId: options.runId,
+          exitCode: ExitCode.ActionFailed,
+          events,
+        };
+      }
+    }
+
+    for (const action of plan.spec.actions) {
+      if (states.get(action.actionId) !== "needs_user") {
+        continue;
+      }
+      let verifyError: unknown;
+      try {
+        await getProvider(action.provider).verify(action.params, options.ssh);
+      } catch (error) {
+        verifyError = error;
+      }
+      if (verifyError !== undefined) {
+        await commit(
+          makeEvent({
+            type: "needs-user",
+            actionId: action.actionId,
+            instruction: `请手动完成 ${action.packageId} 后再次运行 dawn resume。`,
+          }),
+        );
+        return {
+          runId: options.runId,
+          exitCode: ExitCode.NeedsUser,
+          events,
+        };
+      }
+      states.set(action.actionId, "succeeded");
+      timestamps.set(action.actionId, {
+        ...timestamps.get(action.actionId),
+        finishedAt: now().toISOString(),
+        error: undefined,
+      });
+      await commit(
+        makeEvent({
+          type: "action-succeeded",
+          actionId: action.actionId,
+          message: `${action.packageId} 手动步骤已验证。`,
+        }),
+      );
+    }
+
+    const attempted = new Set<string>();
+    while (true) {
+      const action = plan.spec.actions.find((candidate) => {
+        const state = states.get(candidate.actionId);
+        return (
+          !attempted.has(candidate.actionId) &&
+          (state === "pending" ||
+            state === "failed" ||
+            state === "blocked") &&
+          candidate.dependsOn.every(
+            (dependency) => states.get(dependency) === "succeeded",
+          )
+        );
+      });
+      if (!action) {
+        break;
+      }
+      attempted.add(action.actionId);
+      const startedAt = now().toISOString();
+      states.set(action.actionId, "running");
+      timestamps.set(action.actionId, { startedAt });
+      await commit(
+        makeEvent({
+          type: "action-started",
+          actionId: action.actionId,
+          message: `恢复处理 ${action.packageId}`,
+        }),
+      );
+
+      if (action.type === "manual") {
+        states.set(action.actionId, "needs_user");
+        await commit(
+          makeEvent({
+            type: "needs-user",
+            actionId: action.actionId,
+            instruction: `请手动完成 ${action.packageId} 后再次运行 dawn resume。`,
+          }),
+        );
+        return {
+          runId: options.runId,
+          exitCode: ExitCode.NeedsUser,
+          events,
+        };
+      }
+
+      let operationError: unknown;
+      let wasAlreadyInstalled = false;
+      try {
+        if (action.type === "conflict") {
+          throw new Error(`${action.packageId} 存在无法自动处理的冲突。`);
+        }
+        const provider = getProvider(action.provider);
+        const check = await provider.check(action.params, options.ssh);
+        wasAlreadyInstalled = check.installed;
+        if (!check.installed) {
+          if (action.type === "skip") {
+            throw new Error(`${action.packageId} 不再满足 skip 条件。`);
+          }
+          await provider.apply(action.params, options.ssh);
+          await provider.verify(action.params, options.ssh);
+        }
+      } catch (error) {
+        operationError = error;
+      }
+      if (operationError !== undefined) {
+        if (await failAction(action, operationError)) {
+          return {
+            runId: options.runId,
+            exitCode: ExitCode.ActionFailed,
+            events,
+          };
+        }
+        continue;
+      }
+
+      states.set(action.actionId, "succeeded");
+      timestamps.set(action.actionId, {
+        startedAt,
+        finishedAt: now().toISOString(),
+      });
+      await commit(
+        makeEvent({
+          type: "action-succeeded",
+          actionId: action.actionId,
+          message: wasAlreadyInstalled
+            ? `${action.packageId} 已满足，无需修改。`
+            : `${action.packageId} 已安装并验证。`,
+        }),
+      );
+    }
+
+    const hasFailure = [...states.values()].some(
+      (state) =>
+        state === "failed" ||
+        state === "blocked" ||
+        state === "pending" ||
+        state === "running",
+    );
+    outcome = "completed";
+    await commit(
+      makeEvent({
+        type: "run-completed",
+        summary: hasFailure
+          ? "Run 恢复完成，但仍存在部分失败。"
+          : "Run 恢复成功完成。",
+      }),
+    );
+    return {
+      runId: options.runId,
+      exitCode: hasFailure ? ExitCode.ActionFailed : ExitCode.Success,
+      events,
+    };
+  } finally {
+    journal.close();
+  }
+}
+
+interface VerifyRunOptions {
+  readonly runId: string;
+  readonly ssh: SshExecutor;
+  readonly runsDirectory?: string;
+}
+
+export async function verifyRun(
+  options: VerifyRunOptions,
+): Promise<VerifyRunResult> {
+  const runsDirectory =
+    options.runsDirectory ?? join(homedir(), ".dawn-forge", "runs");
+  const { plan, snapshot } = readStoredPlan(options.runId, runsDirectory);
+  const states = new Map(
+    snapshot.actions.map((action) => [action.actionId, action.state]),
+  );
+  const drift: Array<{ actionId: string; message: string }> = [];
+  for (const action of plan.spec.actions) {
+    if (states.get(action.actionId) !== "succeeded") {
+      continue;
+    }
+    try {
+      await getProvider(action.provider).verify(action.params, options.ssh);
+    } catch (error) {
+      drift.push({
+        actionId: action.actionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return {
+    exitCode: drift.length > 0 ? ExitCode.VerifyDrift : ExitCode.Success,
+    drift,
+  };
 }
