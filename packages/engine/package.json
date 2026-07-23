@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "build": "node build.mjs",
-    "test": "npm run build && node --experimental-strip-types --test src/protocol/hash.test.ts src/journal/journal.test.ts src/target/target.test.ts src/cli/cli.test.ts",
+    "test": "npm run build && node --experimental-strip-types --test src/protocol/hash.test.ts src/journal/journal.test.ts src/target/target.test.ts src/providers/providers.test.ts src/cli/cli.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "24.1.0",
     "@types/proper-lockfile": "^4.1.4",
+    "ajv": "^8.18.0",
     "esbuild": "0.25.5",
     "proper-lockfile": "^4.1.2",
     "typescript": "5.8.3"
