@@ -38,11 +38,13 @@ npx.cmd skills@latest add . --list
 
 ## 使用
 
-安装后向 Agent 提供目标 SSH alias 和装机 profile，并调用：
+安装后直接调用：
 
 ```text
-使用 $dawn-forge，以 target `personal-target` 和 profile `/path/to/profile.json` 配置目标电脑。
+使用 $dawn-forge 配置目标电脑。
 ```
+
+Agent 会先自动发现当前工作区 `profiles/` 下的真实 profile；只有没有候选时才创建空模板并询问软件集合。SSH 尚未开启或没有 alias 时，Agent 会先引导目标机开启 SSH、配置管理公钥，再创建稳定 alias。也可以在调用时显式提供已有 target 或 profile 以跳过发现。
 
 从 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 复制空 profile 模板；需要完整参考时查看 [`dawn-forge.profile.macos.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.macos.example.json)。profile 不保存实际配置内容；Agent 在运行时索要缺失配置，并把文字配置或现有配置文件统一传到目标机供用户手动应用。示例软件集合不得被当作默认需求。
 

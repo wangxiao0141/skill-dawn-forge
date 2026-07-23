@@ -20,6 +20,23 @@
 - 同一次运行对 `ssh -G`、连接和 `scp` 使用同一套已验证工具。
 - Windows 控制机向 macOS 目标机传输 shell 脚本时，必须使用 UTF-8 无 BOM 与 LF；不要假设 PowerShell 文本 pipeline 会保持原始换行。可在上传前后比较 SHA-256，或以不会重编码 stdin 的方式传输。出现 `\r: command not found` 时按控制机传输编码故障处理，不得误判为目标命令失败或忽略错误继续。
 
+## SSH 尚未开启或没有 alias
+
+SSH alias 是建联结果，不是启动前提。没有 alias 时：
+
+1. 从已选 profile 取得目标平台，不重复询问。
+2. 引导用户在目标机开启 SSH：
+   - macOS：打开 `System Settings > General > Sharing > Remote Login`，只允许目标账号；
+   - Windows：安装并启动 OpenSSH Server，确认 `sshd` service 和局域网 firewall rule。
+3. 让用户在目标机本地确认登录账号和局域网名称：
+   - macOS：`whoami` 与 `scutil --get LocalHostName`，默认目标为 `<LocalHostName>.local`；
+   - Windows：`whoami` 与 `hostname`。
+4. 在控制机检查现有 SSH config 和 key。优先复用已知管理身份；没有可用 key 时才请求创建。
+5. 给出目标平台对应的本地步骤，把选定管理公钥幂等加入 `authorized_keys`。
+6. 先用局域网 hostname 完成 public-key-only 回连，再把已验证的 HostName、User 和 IdentityFile 写入稳定 alias。
+
+不要要求用户自己设计 alias、提前提供 IdentityFile，或在尚未开启 SSH 时反复尝试连接。
+
 ## 稳定 alias 与管理身份
 
 推荐配置：
@@ -31,6 +48,8 @@ Host personal-target
   IdentityFile ~/.ssh/personal-target_ed25519
   IdentitiesOnly yes
 ```
+
+已有匹配 alias 时复用。需要创建时，优先使用用户给出的名称；否则根据 profile `id` 或已验证 hostname 生成可读名称，先展示最终配置，再写入控制机 SSH config 的 Dawn Forge 标记块。
 
 执行 `<ssh-executable> -G <target>`，至少核对：
 

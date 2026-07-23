@@ -2,9 +2,21 @@
 
 ## 作用
 
-profile 使用 JSON 描述目标机最终需要的软件、非敏感设置和人工任务。目标机由运行时提供的稳定 SSH alias 指定，不写进 profile；控制机平台由 Agent 自动探测。
+profile 使用 JSON 描述目标机最终需要的软件、非敏感设置和人工任务。目标机最终由运行时建立或复用的稳定 SSH alias 指定，不写进 profile；控制机平台由 Agent 自动探测。
 
 以 `assets/dawn-forge.profile.example.json` 为空模板。`assets/dawn-forge.profile.macos.example.json` 是可复制修改的 macOS 完整示例，用于演示软件来源、可选项、SSH key 设置和人工任务。两个文件都不代表默认安装集；只有用户实际 profile 明确列出的软件才可进入安装计划。
+
+## 发现顺序
+
+1. 使用用户本次明确提供的路径。
+2. 否则使用当前会话已经确认的路径。
+3. 否则检查当前工作区 `profiles/` 下的 JSON 文件，不扫描 Skill 的 `assets/`：
+   - 只有一个候选时直接使用；
+   - 多个候选时先按已知目标平台过滤；
+   - 仍不唯一时才让用户选择。
+4. 没有候选时才复制空模板并询问软件集合。
+
+不得在执行发现步骤前要求用户手工输入 profile 路径。
 
 ## 顶层字段
 
