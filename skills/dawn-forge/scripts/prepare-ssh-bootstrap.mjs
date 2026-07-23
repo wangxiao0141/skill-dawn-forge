@@ -13,8 +13,10 @@ const defaultKey = resolve(homedir(), ".ssh", "id_ed25519");
 const keyPath = expandPath(options.key ?? defaultKey);
 const publicKeyPath = `${keyPath}.pub`;
 const sshKeygen = options["ssh-keygen"] ?? "ssh-keygen";
+const sshExecutable = options.ssh ?? "ssh";
+const scriptPath = fileURLToPath(import.meta.url);
 
-if (!command || options.help || !["key", "plan"].includes(command)) {
+if (!command || options.help || !["key", "plan", "install-key"].includes(command)) {
   printUsage();
   process.exit(command && !options.help ? 2 : 0);
 }
@@ -23,8 +25,10 @@ try {
   if (command === "key") {
     const result = inspectOrCreateKey(Boolean(options.create));
     printJson(result);
-  } else {
+  } else if (command === "plan") {
     printJson(createPlan());
+  } else {
+    installKey();
   }
 } catch (error) {
   console.error(error.message);
@@ -135,23 +139,11 @@ function inspectOrCreateKey(create) {
 
 function createPlan() {
   const key = inspectOrCreateKey(false);
-  const platform = requiredOption("platform");
-  const host = requiredOption("host");
-  const user = requiredOption("user");
+  const { platform, host, user } = targetOptions();
   const alias = requiredOption("alias");
 
-  if (!["macos", "windows"].includes(platform)) {
-    throw new Error("--platform must be macos or windows.");
-  }
-  if (!validHost(host)) throw new Error("--host must be a LAN hostname or IP address.");
-  if (!/^[A-Za-z0-9._-]+$/.test(user)) throw new Error("--user contains unsupported characters.");
   if (!/^[A-Za-z0-9._-]+$/.test(alias)) throw new Error("--alias contains unsupported characters.");
 
-  const publicLine = readFileSync(publicKeyPath, "utf8").trim();
-  const [type, blob] = publicLine.split(/\s+/, 2);
-  const managedLine =
-    `no-agent-forwarding,no-port-forwarding,no-X11-forwarding ${type} ${blob} dawn-forge-management`;
-  const encodedKey = Buffer.from(managedLine, "utf8").toString("base64");
   const identityFile = portableIdentityFile(keyPath);
 
   return {
@@ -160,16 +152,11 @@ function createPlan() {
     user,
     alias,
     keyFingerprint: key.fingerprint,
-    connectCommand:
-      `ssh -o PreferredAuthentications=password,keyboard-interactive ` +
-      `-o PubkeyAuthentication=no ${user}@${host}`,
-    authorizeCommand:
-      platform === "macos"
-        ? macosAuthorizeCommand(encodedKey)
-        : windowsAuthorizeCommand(encodedKey, Boolean(options["windows-admin"])),
+    installKeyCommand: buildInstallKeyCommand(platform, host, user),
     verifyCommand:
       `ssh -o BatchMode=yes -o PasswordAuthentication=no ` +
       `-o KbdInteractiveAuthentication=no -o IdentitiesOnly=yes ` +
+      `-o StrictHostKeyChecking=yes ` +
       `-i ${identityFile} ${user}@${host}`,
     sshConfigBlock: [
       `Host ${alias}`,
@@ -179,6 +166,94 @@ function createPlan() {
       "  IdentitiesOnly yes",
     ].join("\n"),
   };
+}
+
+function installKey() {
+  const key = inspectOrCreateKey(false);
+  const { platform, host, user } = targetOptions();
+  const encodedKey = managedKeyBase64();
+  const remoteCommand =
+    platform === "macos"
+      ? macosAuthorizeCommand(encodedKey)
+      : windowsRemoteCommand(
+          windowsAuthorizeCommand(encodedKey, Boolean(options["windows-admin"])),
+        );
+
+  const result = spawnSync(
+    sshExecutable,
+    [
+      "-o",
+      "PreferredAuthentications=password,keyboard-interactive",
+      "-o",
+      "PubkeyAuthentication=no",
+      "-o",
+      "StrictHostKeyChecking=accept-new",
+      "-o",
+      "NumberOfPasswordPrompts=1",
+      `${user}@${host}`,
+      remoteCommand,
+    ],
+    {
+      stdio: "inherit",
+      windowsHide: false,
+    },
+  );
+
+  if (result.error) throw new Error(`Cannot run ssh: ${result.error.message}`);
+  if (result.status !== 0) throw new Error(`SSH key installation failed with exit code ${result.status}.`);
+
+  printJson({
+    installed: true,
+    platform,
+    host,
+    user,
+    keyFingerprint: key.fingerprint,
+  });
+}
+
+function targetOptions() {
+  const platform = requiredOption("platform");
+  const host = requiredOption("host");
+  const user = requiredOption("user");
+
+  if (!["macos", "windows"].includes(platform)) {
+    throw new Error("--platform must be macos or windows.");
+  }
+  if (!validHost(host)) throw new Error("--host must be a LAN hostname or IP address.");
+  if (!/^[A-Za-z0-9._-]+$/.test(user)) throw new Error("--user contains unsupported characters.");
+
+  return { platform, host, user };
+}
+
+function managedKeyBase64() {
+  const publicLine = readFileSync(publicKeyPath, "utf8").trim();
+  const [type, blob] = publicLine.split(/\s+/, 2);
+  const managedLine =
+    `no-agent-forwarding,no-port-forwarding,no-X11-forwarding ${type} ${blob} dawn-forge-management`;
+  return Buffer.from(managedLine, "utf8").toString("base64");
+}
+
+function buildInstallKeyCommand(platform, host, user) {
+  const parts = [
+    "node",
+    quoteForUserShell(scriptPath),
+    "install-key",
+    "--platform",
+    platform,
+    "--host",
+    host,
+    "--user",
+    user,
+  ];
+
+  if (options["windows-admin"]) parts.push("--windows-admin");
+  if (keyPath !== defaultKey) parts.push("--key", quoteForUserShell(keyPath));
+  if (options.ssh) parts.push("--ssh", quoteForUserShell(options.ssh));
+  if (options["ssh-keygen"]) {
+    parts.push("--ssh-keygen", quoteForUserShell(options["ssh-keygen"]));
+  }
+
+  return parts.join(" ");
 }
 
 function requiredOption(name) {
@@ -195,6 +270,11 @@ function validHost(host) {
 function portableIdentityFile(path) {
   if (path === defaultKey) return "~/.ssh/id_ed25519";
   return path.replaceAll("\\", "/");
+}
+
+function quoteForUserShell(value) {
+  if (process.platform === "win32") return `'${value.replaceAll("'", "''")}'`;
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function macosAuthorizeCommand(encodedKey) {
@@ -224,13 +304,18 @@ function windowsAuthorizeCommand(encodedKey, administrator) {
   ].join("; ");
 }
 
+function windowsRemoteCommand(commandText) {
+  const encoded = Buffer.from(commandText, "utf16le").toString("base64");
+  return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`;
+}
+
 function printJson(value) {
   console.log(JSON.stringify(value, null, 2));
 }
 
 function printUsage() {
-  const script = fileURLToPath(import.meta.url);
   console.log(`Usage:
-  node "${script}" key [--create] [--key <path>] [--ssh-keygen <path>]
-  node "${script}" plan --platform <macos|windows> --host <hostname-or-ip> --user <user> --alias <alias> [--windows-admin] [--key <path>]`);
+  node "${scriptPath}" key [--create] [--key <path>] [--ssh-keygen <path>]
+  node "${scriptPath}" plan --platform <macos|windows> --host <hostname-or-ip> --user <user> --alias <alias> [--windows-admin] [--key <path>] [--ssh <path>]
+  node "${scriptPath}" install-key --platform <macos|windows> --host <hostname-or-ip> --user <user> [--windows-admin] [--key <path>] [--ssh <path>]`);
 }

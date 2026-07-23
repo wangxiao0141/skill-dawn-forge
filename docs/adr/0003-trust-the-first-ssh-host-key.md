@@ -1,3 +1,3 @@
-# 首次连接核对 SSH host key
+# 首次连接记录 SSH host key
 
-用户先在目标机本地取得 SSH host-key fingerprint，再从控制机终端首次连接。终端提示的 fingerprint 必须一致，用户才接受并继续输入密码。后续 host key 发生变化时停止连接，不自动清除 `known_hosts`，也不允许关闭 host-key 验证。
+为避免在新目标机输入命令，控制机首次通过用户从系统界面读取的局域网 hostname/IP 连接时使用 `StrictHostKeyChecking=accept-new` 记录 host key。后续 host key 发生变化时停止连接，不自动清除 `known_hosts`，也不允许关闭 host-key 验证。
