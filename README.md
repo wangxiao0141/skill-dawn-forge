@@ -1,55 +1,45 @@
 # Dawn Forge
 
-`dawn-forge` 是一个可安装的 Agent Skill，用于由 macOS 或 Windows 控制机上的 Agent 与用户协作，通过局域网 SSH 配置已可正常使用的 macOS 或 Windows 个人电脑。
+`dawn-forge` 是一个通过局域网 SSH 配置个人电脑的 Agent Skill。控制机和目标机均支持 macOS 或 Windows。
 
-第一版覆盖：
+它负责：
 
-- SSH Remote Login 与长期管理公钥建联；
-- 稳定 SSH alias、既有管理身份复用与首次建联；
-- platform-specific profile、软件计划和一次确认后的批量安装；
-- 离线目标机的代理安装包下载与传输、用户手动安装、配置文件交接与联网门禁；
-- 文字配置和现有配置文件的目标机交接；
-- 可选代理客户端、GitHub 专用 key 与通用 SSH key 配置；
-- 状态验证、失败恢复和后续重复执行。
+- 从零引导 SSH 建联并保存稳定 alias；
+- 根据用户选择的 JSON profile 生成计划并批量安装；
+- 目标机离线时传输 Clash Verge 安装包和配置，由用户手动安装；
+- 配置目标机 GitHub key、通用 SSH key，并验证结果。
 
-它不安装操作系统、不分区、不处理企业 MDM，也不开放公网 SSH。
+目标机必须已经完成系统安装和首次设置。本 Skill 不分区、不处理企业 MDM，也不开放公网 SSH。
 
 ## 安装
-
-从 GitHub 仓库安装指定 skill：
 
 ```powershell
 npx.cmd skills@latest add wangxiao0141/skill-dawn-forge --skill dawn-forge
 ```
 
-在 macOS 或 Linux 上使用：
+macOS 或 Linux：
 
 ```bash
 npx skills@latest add wangxiao0141/skill-dawn-forge --skill dawn-forge
 ```
 
-开发期间可从本地仓库验证发现：
-
-```powershell
-npx.cmd skills@latest add . --list
-```
-
-`skills` CLI 会发现 [`skills/dawn-forge/SKILL.md`](./skills/dawn-forge/SKILL.md)，仓库根目录的设计记录和测试不会进入安装后的 Skill。
-
 ## 使用
-
-安装后直接调用：
 
 ```text
 使用 $dawn-forge 配置目标电脑。
 ```
 
-Agent 只展示四个阶段：目标与配置、环境确认、Clash 安装与联网、执行与交付。目标选择、SSH 建联和 profile 选择合并在第一阶段；先检查目标机现状和安装计划，再根据网络结果决定是否进入 Clash 阶段。每轮集中询问当前阶段的 2–4 个相关问题或操作，即使只有一个 profile 也不会自动替用户选择。
+流程只有四个阶段：
 
-从 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 复制空 profile 模板；需要完整参考时查看 [`dawn-forge.profile.macos.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.macos.example.json)。profile 不保存实际配置内容；Agent 在运行时索要缺失配置，并把文字配置或现有配置文件统一传到目标机供用户手动应用。示例软件集合不得被当作默认需求。
+1. 目标与配置
+2. 环境确认
+3. Clash 安装与联网（不需要时跳过）
+4. 执行与交付
 
-仓库根目录的 `profiles/` 用于维护仓库所有者自己的真实 profile。它由 Git 管理，但位于可安装 Skill 目录之外，因此不会被 `npx skills` 带到使用者的安装目录。
+Agent 会先发现已有 SSH target 和 profile，再集中询问必要信息，不要求用户预先准备 alias 或 profile 路径。
 
-## 当前验证边界
+## Profile
 
-仓库会验证 Skill 结构、profile 校验器和 `npx skills` 发现。macOS/Windows 控制机到 macOS/Windows 目标机的每种组合必须分别完成真实端到端验证；未验证组合必须报告为 `not-verified`。
+使用 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 创建空 profile；[`dawn-forge.profile.macos.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.macos.example.json) 仅作示例，不是默认软件集。
+
+真实 profile 放在工作区的 `profiles/`，不会随 Skill 安装。订阅 URL、token 等配置不写入 profile，由 Agent 在运行时作为文件传到目标机。
