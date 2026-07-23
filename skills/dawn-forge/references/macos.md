@@ -17,13 +17,15 @@ SSH 建联后只读检查：
 
 平台、架构或用户不匹配时停止。不要根据文件是否存在单独断言软件可用。
 
-## 可选 Clash Verge Rev
+## Clash Verge Rev 网络引导
 
 仅当 profile 明确列出 `Clash Verge Rev` 时处理。只使用官方仓库：
 
 ```text
 https://github.com/clash-verge-rev/clash-verge-rev
 ```
+
+用户说明目标机离线，或目标机无法访问本次计划所需官方端点时，完整执行 `references/network-bootstrap.md`。必须由控制机下载官方安装包并通过局域网 `scp` 传到目标机；在代理/TUN 联网验证通过前，不运行 `xcode-select --install`、Homebrew 安装或其他联网步骤。
 
 每次执行都核实当前官方 stable Release，不固定历史版本：
 
@@ -34,7 +36,7 @@ https://github.com/clash-verge-rev/clash-verge-rev
 5. 上传前后分别计算 SHA-256，必须一致。
 6. 在目标机挂载或安装前后使用 `codesign --verify --deep --strict` 和 `spctl --assess` 检查 app；失败即停止。
 
-把安装包传到 `~/Downloads/`。由用户在 GUI 中：
+把安装包传到 `~/Downloads/`。已有同名文件时先比较 SHA-256，不覆盖不同内容。由用户在 GUI 中：
 
 - 安装并首次打开；
 - 处理 Gatekeeper、网络扩展、helper 或系统代理授权；

@@ -7,6 +7,7 @@
 - SSH Remote Login 与长期管理公钥建联；
 - 稳定 SSH alias、既有管理身份复用与首次建联；
 - platform-specific profile、软件计划和一次确认后的批量安装；
+- 离线目标机的代理客户端控制机下载、局域网上传与联网门禁；
 - 可选代理客户端、GitHub 专用 key 与通用 SSH key 配置；
 - 状态验证、失败恢复和后续重复执行。
 
