@@ -1,21 +1,7 @@
-# 配置文件交接
+# 配置文件交接范围
 
-安装需要额外配置时，Agent 负责把配置放到目标机，用户负责手动应用。
+Dawn Engine V1 不负责代理订阅、token、许可证、SSH private key 或其他秘密配置的收集与传输。不得把这些值放入聊天、Profile、Plan、Journal、环境变量或命令参数。
 
-目标目录：
+随 Skill 保留的 `collect-private-input.mjs`、`transfer-private-input.mjs`、`artifact-cache.mjs` 和 `transfer-artifact.mjs` 属于尚未接入 Engine Target/Plan/Run 合同的底层能力，不是当前公开工作流入口。不得把 `dawn target bootstrap` 生成的 Target 伪装成 legacy identity receipt，也不得手写 `scp`、SSH 或下载命令绕过边界。
 
-- macOS：`~/Downloads/dawn-forge/`
-- Windows：`%USERPROFILE%\Downloads\dawn-forge\`
-
-规则：
-
-1. 用户已经提供的配置直接使用；缺少必要配置时主动询问。
-2. 用户提供的是文件时，通过 `scp` 保持原文件名传输。
-3. 用户提供的是文字时，通过 SSH stdin 写成含义明确的文本文件。例如 Clash 订阅 URL 写为 `clash-subscription-url.txt`。
-4. 一次传完本轮需要的配置，不逐个要求确认。
-5. 不把配置内容写入 profile、仓库、命令参数、输出或运行状态。
-6. macOS 目标目录权限设为 `0700`，文件权限设为 `0600`；Windows 文件放在当前用户 profile 下。
-7. 传输后只报告文件名和目标路径，不读取或回显内容。
-8. 文件默认保留，用户可在完成配置后自行删除。
-
-配置文件只用于交接，不由 Agent 自动执行、导入或解释。
+需要配置交接时，将其作为 V1 范围外人工任务报告。用户独立完成后，只重新运行与 Catalog Action 有关的 `dawn plan`、`apply` 或 `verify` 流程。

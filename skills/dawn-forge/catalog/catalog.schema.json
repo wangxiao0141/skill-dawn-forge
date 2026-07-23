@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "catalog.schema.json",
+  "title": "Dawn Engine V1 Catalog",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/entry"
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "provider",
+        "params",
+        "critical",
+        "dependsOn"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+          "minLength": 1,
+          "description": "稳定且唯一的软件单元标识符。"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "homebrew",
+            "git",
+            "git-identity"
+          ],
+          "description": "处理该软件单元的 Provider 名称。"
+        },
+        "params": {
+          "type": "object",
+          "description": "传递给 Provider 的参数。",
+          "oneOf": [
+            {
+              "maxProperties": 0
+            },
+            {
+              "additionalProperties": false,
+              "required": [
+                "formula"
+              ],
+              "properties": {
+                "formula": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9@+._/-]*$"
+                },
+                "cask": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        },
+        "critical": {
+          "type": "boolean",
+          "description": "失败时是否立即停止整个 Run。"
+        },
+        "dependsOn": {
+          "type": "array",
+          "description": "必须先成功的 Catalog 条目 ID。",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "provider": {
+                "enum": [
+                  "git",
+                  "git-identity"
+                ]
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "maxProperties": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

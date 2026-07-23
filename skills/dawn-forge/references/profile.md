@@ -1,94 +1,38 @@
-# 装机 profile
+# Dawn Engine V1 Profile
 
-## 作用
-
-profile 使用 JSON 描述目标机最终需要的软件、非敏感设置和人工任务。目标机最终由运行时建立或复用的稳定 SSH alias 指定，不写进 profile；控制机平台由 Agent 自动探测。
-
-以 `assets/dawn-forge.profile.example.json` 为空模板。`assets/dawn-forge.profile.macos.example.json` 是可复制修改的 macOS 完整示例，用于演示软件来源、可选项、SSH key 设置和人工任务。两个文件都不代表默认安装集；只有用户实际 profile 明确列出的软件才可进入安装计划。
-
-## 发现与选择
-
-1. 先完成目标电脑选择和 SSH 平台探测，再处理 profile。
-2. 检查当前工作区 `profiles/` 下的 JSON 文件，不扫描 Skill 的 `assets/`。
-3. 每个文件都必须运行 `scripts/validate-profile.mjs`；禁止通过 `Get-Content`、正则、字符位置或模型阅读自行判断 JSON 是否有效。
-4. 只使用 validator 输出的 `profileName`、`platform`、`software`、`settings` 和 `manualTasks` 生成候选摘要。
-5. 过滤目标平台不一致的候选，再明确询问“是否给这台目标电脑使用这个 profile”。
-6. 即使只有一个匹配候选，也只能标为推荐项，必须等待用户确认。
-7. 没有有效候选时，报告 validator 的原始错误。先自动完成只读诊断，再询问用户修复现有文件还是创建空模板。
-
-不得只展示 profile 文件名或软件数量，不得要求用户手工输入已经发现的 profile 路径，也不得根据文件数量自动替用户选择。
-
-## 顶层字段
-
-| 字段 | 必需 | 说明 |
-| --- | --- | --- |
-| `schemaVersion` | 是 | 第一版固定为 `1` |
-| `id` | 是 | profile 的稳定标识 |
-| `name` | 是 | 展示名称 |
-| `platform` | 是 | `macos` 或 `windows` |
-| `software` | 是 | 期望安装的软件数组，可以为空 |
-| `settings` | 否 | 非敏感 Git 和 SSH key 设置 |
-| `manualTasks` | 否 | 最终检查表中的人工任务 |
-
-## `software`
+CLI Profile 是严格 JSON 对象：
 
 ```json
 {
-  "id": "visual-studio-code",
-  "name": "Visual Studio Code",
-  "source": "auto",
-  "required": true
+  "schemaVersion": 1,
+  "platform": "macos",
+  "catalogVersion": "v1",
+  "packages": [
+    { "id": "homebrew", "state": "present" },
+    { "id": "git", "state": "present" },
+    {
+      "id": "git-identity",
+      "state": "present",
+      "params": {
+        "name": "Your Name",
+        "email": "you@example.com"
+      }
+    },
+    { "id": "node", "state": "present" },
+    { "id": "vscode", "state": "present" }
+  ]
 }
 ```
 
-- `id`：小写字母、数字和连字符组成的稳定标识。
-- `name`：展示名称。
-- `source`：可选，默认 `auto`。允许 `auto`、`brew-formula`、`brew-cask`、`mac-app-store`、`winget`、`microsoft-store`、`npm-global`、`volta-tool`、`official-download`、`manual`。
-- `package`：可选的包标识提示，不是命令或 URL。显式包管理器来源必须提供。
-- `version`：可选；缺省表示最新稳定版。
-- `required`：可选，默认 `true`。
+## 规则
 
-macOS profile 不得使用 `winget` 或 `microsoft-store`；Windows profile 不得使用 Homebrew 或 Mac App Store 来源。不要直接执行 `name` 或 `package`，先解析为受控安装参数并在计划中展示。
+- `schemaVersion` 固定为 `1`，`platform` 固定为 `macos`。
+- `catalogVersion` 必须对应随 Skill 发布的 Catalog。
+- 每个 `packages` 条目必须是对象，且 `id` 不得重复。
+- `state` 只能是 `present` 或 `absent`。
+- 软件 ID 只能来自对应 Catalog；Agent 不得自行发明 Provider 或参数。
+- 只有 `git-identity` 允许 `params`，且必须同时提供非空的 `name` 和合法 `email`。其他软件参数由 Catalog 固定。
+- `absent` 在 V1 只用于冲突检测；Engine 不自动卸载软件。
+- 未知字段、控制字符、命令、URL、路径、密码、token、订阅或私钥都会被拒绝。
 
-`npm-global` 与 `volta-tool` 可跨平台使用，必须提供 `package`。执行前分别验证目标机已有受控 Node.js/npm 或 Volta；缺少的 runtime 必须作为依赖显示在一次性安装计划中，不得静默安装。
-
-目标机需要依靠代理客户端取得首次外网时，该客户端使用 `official-download`。Agent 在控制机下载并校验安装包，通过局域网传到目标机；用户在目标机手动安装。
-
-## `settings`
-
-Git identity：
-
-```json
-{
-  "git": {
-    "userName": "Alice",
-    "userEmail": "alice@example.com",
-    "defaultBranch": "main"
-  }
-}
-```
-
-目标机外部服务 key：
-
-```json
-{
-  "ssh": {
-    "githubKey": true,
-    "generalKey": true
-  }
-}
-```
-
-未声明的设置保持目标机现状。`githubKey` 和 `generalKey` 只控制目标机外部服务 key，不影响控制机用于管理目标机的 SSH 身份。
-
-## 禁止内容
-
-profile 不得包含：
-
-- password、token、API key、credential 或订阅地址；
-- SSH private key 或 private key 内容；
-- 带凭据的 URL；
-- shell、PowerShell、AppleScript 或任意命令；
-- 任意下载 URL。
-
-遇到未知 `schemaVersion` 或未知字段时停止，不静默迁移。
+`assets/dawn-engine.profile.example.json` 是 CLI 空模板。其他 `dawn-forge.profile.*` 文件属于保留的 legacy validator 格式，不得传给 `dawn plan`。
