@@ -14,7 +14,7 @@
 - profile 路径、SHA-256、`id` 与 `platform`；
 - target alias 及 `ssh -G` 解析后的非秘密连接字段；
 - SSH host-key fingerprint；
-- 目标 OS、architecture、hostname、系统版本与 machine ID；
+- 目标 OS、architecture、系统版本、machine ID，以及仅供展示的 hostname/平台原生名称；
 - 各阶段状态和时间；
 - 软件动作结果；
 - artifact 名称、官方来源、版本和公开 digest；
@@ -28,10 +28,12 @@
 
 1. 重新校验 profile 并比较 SHA-256；变化后生成新计划，不沿用旧批准。
 2. 重新解析同一 target alias，核对 `HostName`、`User`、`IdentityFile` 和 host key。
-3. 重新探测目标 OS、architecture、hostname、系统版本和 machine ID。
-4. 任一身份字段或 profile platform 不一致时停止。
+3. 重新探测目标 OS、architecture、系统版本、machine ID 和平台原生网络名称。
+4. 已记录的 host key 或 machine ID 变化，或账号、平台、architecture 与目标不符时停止。
 5. 重新探测每个阶段的真实状态，不因 state 写着 `completed` 就跳过验证。
 6. 只重试已证明幂等的步骤；GUI installer、管理员授权和未知状态 installer 必须先检查。
+
+普通 hostname、`ComputerName`、`LocalHostName` 等可变名称发生变化时更新展示信息，不把名称变化单独视为错连，也不向用户增加确认步骤。连接地址失效时才重新发现可用 hostname/IP。
 
 同一规范化 target alias 只允许一个修改流程。锁已占用时拒绝启动；不同 alias 指向同一机器时无法自动识别，禁止通过换 alias 绕过。
 

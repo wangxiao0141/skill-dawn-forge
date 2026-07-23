@@ -8,6 +8,8 @@ SSH 建联后只读检查：
 - `uname -m` 必须为受支持的 `arm64` 或 `x86_64`；
 - `sw_vers` 与 Apple 当前支持范围；
 - 当前账号与 `ssh -G <target>` 解析的 `User`；
+- `scutil --get LocalHostName`、`scutil --get ComputerName` 和可选的 `scutil --get HostName`；
+- machine ID；
 - 可用磁盘空间；
 - `xcode-select -p`；
 - `/opt/homebrew/bin/brew`；
@@ -16,6 +18,15 @@ SSH 建联后只读检查：
 - `scutil --proxy` 和当前网络连通性。
 
 平台、架构或用户不匹配时停止。不要根据文件是否存在单独断言软件可用。
+
+macOS 的名称各自含义不同：
+
+- `<LocalHostName>.local` 是 Bonjour/mDNS 连接地址，应与用户从 `Remote Login` 面板读取的 `.local` 地址比较；
+- `ComputerName` 是界面显示名称，可以与连接地址不同；
+- `HostName` 可以未设置；
+- shell 的 `hostname` 可能回退为 `anonymous`，只作信息记录。
+
+当 `LocalHostName` 与 `.local` 地址匹配，且账号、`Darwin`、architecture 和 SSH host key 均符合时，直接记录 machine ID 并继续。不得因为 `hostname` 为 `anonymous`、`HostName` 未设置或 `ComputerName` 不同而暂停询问用户。
 
 ## Clash Verge Rev 网络引导
 
