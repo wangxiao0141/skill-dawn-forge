@@ -44,7 +44,7 @@ npx.cmd skills@latest add . --list
 使用 $dawn-forge 配置目标电脑。
 ```
 
-Agent 按固定阶段交互：先选择已有电脑或新电脑，再完成 SSH 建联和 alias 命名，随后使用 validator 展示兼容 profile 的软件、设置与人工任务，最后生成安装计划。每轮集中询问同一阶段的 2–4 个相关问题或操作，不跨阶段混问；即使只有一个 profile 也不会自动替用户选择。
+Agent 只展示四个阶段：目标与配置、环境确认、Clash 安装与联网、执行与交付。目标选择、SSH 建联和 profile 选择合并在第一阶段；先检查目标机现状和安装计划，再根据网络结果决定是否进入 Clash 阶段。每轮集中询问当前阶段的 2–4 个相关问题或操作，即使只有一个 profile 也不会自动替用户选择。
 
 从 [`dawn-forge.profile.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.example.json) 复制空 profile 模板；需要完整参考时查看 [`dawn-forge.profile.macos.example.json`](./skills/dawn-forge/assets/dawn-forge.profile.macos.example.json)。profile 不保存实际配置内容；Agent 在运行时索要缺失配置，并把文字配置或现有配置文件统一传到目标机供用户手动应用。示例软件集合不得被当作默认需求。
 
